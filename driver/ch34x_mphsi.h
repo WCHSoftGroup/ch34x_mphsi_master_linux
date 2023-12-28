@@ -37,7 +37,7 @@
 #define DRIVER_AUTHOR "WCH"
 #define DRIVER_ALIAS  "spi/i2c/gpio: ch347/ch341"
 #define DRIVER_DESC   "USB to SPI/I2C/GPIO master driver for ch347/ch341, etc."
-#define VERSION_DESC  "V1.2 On 2023.06"
+#define VERSION_DESC  "V1.3 On 2023.12"
 
 /* check for condition and return with or without err code if it fails */
 #define CHECK_PARAM_RET(cond, err) \
@@ -143,8 +143,8 @@
 #define CH341_CMD_I2C_STM_SET	0x60
 #define CH341_CMD_I2C_STM_END	0x00
 #define CH347_CMD_I2C_STM_MAX	0x3F
-#define CH347_CMD_I2C_STRETCH_Y 0x15 // I2C Clock Stretch enable
-#define CH347_CMD_I2C_STRETCH_N 0x16 // I2C Clock Stretch disable
+#define CH347_CMD_I2C_STRETCH_Y 0x15 /* I2C Clock Stretch enable */
+#define CH347_CMD_I2C_STRETCH_N 0x16 /* I2C Clock Stretch disable */
 
 #define GPIO_MODE_IN  0
 #define GPIO_MODE_OUT 1

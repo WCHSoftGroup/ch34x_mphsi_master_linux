@@ -15,6 +15,7 @@
  * V1.1 - add supports for i2c master, gpio irq function
  * V1.2 - add supports for i2c communication of long packets, use workqueue to implement irq setting operation,
  *      - support more spi clock frequency
+ * V1.3 - add supports for gpio level triggered interrupt, add mutex in ch347_spi_transfer_one_message
  */
 
 #include "ch34x_mphsi.h"
@@ -46,8 +47,8 @@ struct ch347_pin_config ch347t_board_config[CH347T_MPHSI_GPIOS] = {
 struct ch347_pin_config ch347f_board_config[CH347F_MPHSI_GPIOS] = {
 	{ 17, "gpio0", 0, GPIO_MODE_IN, true },	 { 18, "gpio1", 1, GPIO_MODE_OUT, true },
 	{ 10, "gpio2", 2, GPIO_MODE_OUT, true }, { 9, "gpio3", 3, GPIO_MODE_OUT, true },
-	{ 23, "gpio4", 4, GPIO_MODE_OUT, true }, { 24, "gpio5", 5, GPIO_MODE_OUT, true },
-	{ 25, "gpio6", 6, GPIO_MODE_IN, true },	 { 26, "gpio7", 7, GPIO_MODE_OUT, true },
+	{ 23, "gpio4", 4, GPIO_MODE_OUT, true }, { 24, "gpio5", 5, GPIO_MODE_IN, true },
+	{ 25, "gpio6", 6, GPIO_MODE_OUT, true }, { 26, "gpio7", 7, GPIO_MODE_OUT, true },
 };
 
 extern struct spi_board_info ch341_spi_device_template;
@@ -209,8 +210,10 @@ int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len, int in_len)
 		}
 	}
 
-	if (in_len == 0)
-		return out_len;
+	if (in_len == 0) {
+		actual = out_len;
+		goto exit;
+	}
 
 	size = in_len;
 
@@ -219,6 +222,7 @@ int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len, int in_len)
 			      usb_rcvbulkpipe(ch34x_dev->usb_dev, usb_endpoint_num(ch34x_dev->bulk_in)),
 			      ch34x_dev->bulkin_buf, size, &actual, 2000);
 
+exit:
 	/*
 	 * release our reference to this urb, the USB core will eventually free
 	 * it entirely
@@ -246,14 +250,13 @@ bool ch347_get_chipinfo(struct ch34x_device *ch34x_dev)
 	int len, i;
 	bool ret = false;
 
+	mutex_lock(&ch34x_dev->io_mutex);
 	i = 0;
 	io[i++] = USB20_CMD_INFO_RD;
 	io[i++] = 1;
 	io[i++] = 0;
 	io[i++] = 0;
 	len = i;
-
-	mutex_lock(&ch34x_dev->io_mutex);
 
 	if (ch34x_usb_transfer(ch34x_dev, len, 0) != len)
 		goto exit;
@@ -284,6 +287,7 @@ bool ch347_func_switch(struct ch34x_device *ch34x_dev, int index)
 	int len, i;
 	bool ret = false;
 
+	mutex_lock(&ch34x_dev->io_mutex);
 	i = 0;
 	io[i++] = USB20_CMD_FUNC_SWITCH;
 	io[i++] = 8;
@@ -306,8 +310,6 @@ bool ch347_func_switch(struct ch34x_device *ch34x_dev, int index)
 		break;
 	}
 	len = USB20_CMD_HEADER + 8;
-
-	mutex_lock(&ch34x_dev->io_mutex);
 
 	if (ch34x_usb_transfer(ch34x_dev, len, 0) != len)
 		goto exit;

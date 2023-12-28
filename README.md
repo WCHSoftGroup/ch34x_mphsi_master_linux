@@ -181,7 +181,7 @@ int status = ioctl (spi, SPI_IOC_MESSAGE(1), &spi_trans);
 
 ### 使用GPIO接口
 
-用户空间方位GPIO，可以使用```sysfs```，对驱动支持的GPIO，可在如下系统目录下查看。
+用户空间访问GPIO，可以使用```sysfs```，对驱动支持的GPIO，可在如下系统目录下查看。
 
 ```
 /sys/class/gpio/<gpio>/

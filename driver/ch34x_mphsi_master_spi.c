@@ -726,6 +726,24 @@ out:
 	return ret;
 }
 
+static int ch347_spi_build_packet(struct ch34x_device *ch34x_dev, struct spi_device *spi, struct spi_transfer *t)
+{
+	const u8 *tx = t->tx_buf;
+	int len = t->len;
+
+	/* spi output only */
+	if (tx) {
+		/* fill output buffer with command and output data */
+		memcpy(ch34x_dev->bulkout_buf + ch34x_dev->windex, tx, len);
+		ch34x_dev->windex += len;
+	} else {
+		dev_err(&spi->dev, "error transfer has null tx\n");
+		return -EIO;
+	}
+
+	return len;
+}
+
 static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_message *msg)
 {
 	struct ch34x_device *ch34x_dev = ch34x_spi_maser_to_dev(ctlr);
@@ -733,47 +751,145 @@ static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_me
 	bool keep_cs = false;
 	int ret = 0;
 
-	ch347_spi_set_cs(msg->spi, true);
+	int bytes_to_xfer = 0;
+	int bytes_to_copy;
+	u8 *rbuf = NULL;
 
-	list_for_each_entry(xfer, &msg->transfers, transfer_list) {
-		if ((xfer->tx_buf || xfer->rx_buf) && xfer->len) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-			reinit_completion(&ctlr->xfer_completion);
-#endif
-			ret = ch34x_spi_transfer_one(ch34x_dev, msg->spi, xfer);
-			if (ret < 0) {
-				dev_err(&msg->spi->dev, "SPI transfer failed: %d\n", ret);
+	mutex_lock(&ch34x_dev->io_mutex);
+
+	if ((ch34x_dev->firmver >= 0x0341) || (ch34x_dev->chiptype == CHIP_CH347F)) {
+		rbuf = kmalloc(MAX_BUFFER_LENGTH * 2, GFP_KERNEL);
+		if (!rbuf) {
+			printk("%s kmalloc failed.\n", __func__);
+			return -ENOMEM;
+		}
+
+		ch34x_dev->bulkout_buf[0] = USB20_CMD_SPI_RD_WR;
+		bytes_to_xfer += USB20_CMD_HEADER;
+		ch34x_dev->windex = USB20_CMD_HEADER;
+
+		list_for_each_entry(xfer, &msg->transfers, transfer_list) {
+			if ((xfer->tx_buf || xfer->rx_buf) && xfer->len) {
+				if (xfer->len > (MAX_BUFFER_LENGTH - USB20_CMD_HEADER)) {
+					printk("%s xfer->len: %d too long.\n", __func__, xfer->len);
+					ret = -EPROTO;
+					goto out;
+				}
+				bytes_to_copy = ch347_spi_build_packet(ch34x_dev, msg->spi, xfer);
+				if (bytes_to_copy < 0) {
+					printk("%s ch347_spi_build_packet error: %d.\n", __func__, bytes_to_copy);
+					ret = -EIO;
+					goto out;
+				}
+				bytes_to_xfer += bytes_to_copy;
+			} else {
+				if (xfer->len)
+					dev_err(&msg->spi->dev, "Bufferless transfer has length %u\n", xfer->len);
+			}
+			if (msg->status != -EINPROGRESS) {
+				printk("%s msg->status error: %d.\n", __func__, msg->status);
 				goto out;
 			}
+		}
+		if (msg->spi->chip_select == 0) {
+			ch34x_dev->bulkout_buf[1] = (u8)(bytes_to_xfer - USB20_CMD_HEADER);
+			ch34x_dev->bulkout_buf[2] = (u8)((bytes_to_xfer - USB20_CMD_HEADER) >> 8) | BIT(7) | BIT(6);
 		} else {
-			if (xfer->len)
-				dev_err(&msg->spi->dev, "Bufferless transfer has length %u\n", xfer->len);
+			ch34x_dev->bulkout_buf[1] = (u8)(bytes_to_xfer - USB20_CMD_HEADER);
+			ch34x_dev->bulkout_buf[2] = (u8)((bytes_to_xfer - USB20_CMD_HEADER) >> 8) | BIT(5) | BIT(4);
 		}
 
-		if (msg->status != -EINPROGRESS)
+		/* usb transfer */
+		ret = ch34x_usb_transfer(ch34x_dev, bytes_to_xfer, 0);
+		if (ret != bytes_to_xfer) {
+			printk("%s ch34x_usb_transfer error, ret: %d, bytes_to_xfer: %d.\n", __func__, ret, bytes_to_xfer);
+			ret = -EIO;
 			goto out;
-
-		if (xfer->cs_change) {
-			if (list_is_last(&xfer->transfer_list, &msg->transfers)) {
-				keep_cs = true;
-			} else {
-				ch347_spi_set_cs(msg->spi, false);
-				udelay(10);
-				ch347_spi_set_cs(msg->spi, true);
-			}
 		}
 
-		msg->actual_length += xfer->len;
+		ret = ch34x_usb_transfer(ch34x_dev, 0, bytes_to_xfer);
+		if (ret != bytes_to_xfer) {
+			printk("%s ch34x_usb_transfer error2, ret: %d, bytes_to_xfer: %d.\n", __func__, ret, bytes_to_xfer);
+			ret = -EIO;
+			goto out;
+		}
+
+		/* fill input data with input buffer */
+		if (ch34x_dev->bulkin_buf[0] != USB20_CMD_SPI_RD_WR) {
+			printk("%s ch34x_usb_transfer error3, bulkin_buf[0]: 0x%2x.\n", __func__, ch34x_dev->bulkin_buf[0]);
+			ret = -EIO;
+			goto out;
+		}
+		/* fill input data with input buffer */
+		memcpy(rbuf, ch34x_dev->bulkin_buf + USB20_CMD_HEADER, bytes_to_xfer - USB20_CMD_HEADER);
+
+		list_for_each_entry(xfer, &msg->transfers, transfer_list) {
+			if ((xfer->tx_buf || xfer->rx_buf) && xfer->len) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+				reinit_completion(&ctlr->xfer_completion);
+#endif
+				memcpy(xfer->rx_buf, rbuf + msg->actual_length, xfer->len);
+			} else {
+				if (xfer->len)
+					dev_err(&msg->spi->dev, "Bufferless transfer has length %u\n", xfer->len);
+			}
+
+			if (msg->status != -EINPROGRESS) {
+				printk("%s msg->status2 error: %d.\n", __func__, msg->status);
+				goto out;
+			}
+
+			msg->actual_length += xfer->len;
+		}
+
+		ret = 0;
+	} else {
+		ch347_spi_set_cs(msg->spi, true);
+
+		list_for_each_entry(xfer, &msg->transfers, transfer_list) {
+			if ((xfer->tx_buf || xfer->rx_buf) && xfer->len) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+				reinit_completion(&ctlr->xfer_completion);
+#endif
+				ret = ch34x_spi_transfer_one(ch34x_dev, msg->spi, xfer);
+				if (ret < 0) {
+					dev_err(&msg->spi->dev, "SPI transfer failed: %d\n", ret);
+					goto out1;
+				}
+			} else {
+				if (xfer->len)
+					dev_err(&msg->spi->dev, "Bufferless transfer has length %u\n", xfer->len);
+			}
+
+			if (msg->status != -EINPROGRESS)
+				goto out1;
+
+			if (xfer->cs_change) {
+				if (list_is_last(&xfer->transfer_list, &msg->transfers)) {
+					keep_cs = true;
+				} else {
+					ch347_spi_set_cs(msg->spi, false);
+					udelay(10);
+					ch347_spi_set_cs(msg->spi, true);
+				}
+			}
+			msg->actual_length += xfer->len;
+		}
+out1:
+		if (ret != 0 || !keep_cs)
+			ch347_spi_set_cs(msg->spi, false);
 	}
 
 out:
-	if (ret != 0 || !keep_cs)
-		ch347_spi_set_cs(msg->spi, false);
+	mutex_unlock(&ch34x_dev->io_mutex);
 
 	if (msg->status == -EINPROGRESS)
 		msg->status = ret;
 
 	spi_finalize_current_message(ctlr);
+
+	if (rbuf)
+		kfree(rbuf);
 
 	return ret;
 }
@@ -808,9 +924,9 @@ static int ch347_spi_setup(struct spi_device *spi)
 			     75e5,   7e6,    6e6,   45e5,  375e4,  35e5,    3e6,    225e4, 1875e3,  175e4,  15e5,
 			     1125e3, 9375e2, 875e3, 750e3, 5625e2, 46875e1, 4375e2, 375e3, 28125e1, 21875e1 };
 	int clk_table1[] = {
-		28e6,  14e6,  7e6,    35e5,   175e4,   875e3, 4375e2, 21875e1, 36e6,   18e6,	9e6,
-		45e5,  225e4, 1125e3, 5625e2, 28125e1, 48e6,  24e6,   12e6,    6e6,    3e6,	15e5,
-		750e3, 375e3, 60e6,   30e6,   15e6,    75e5,  375e4,  1875e3,  9375e2, 46875e1,
+		28e6,  14e6,  7e6,   35e5,   175e4,  875e3, 4375e2, 21875e1, 72e6,   36e6,    18e6,
+		9e6,   45e5,  225e4, 1125e3, 5625e2, 48e6,  24e6,   12e6,    6e6,    3e6,     15e5,
+		750e3, 375e3, 60e6,  30e6,   15e6,   75e5,  375e4,  1875e3,  9375e2, 46875e1,
 	};
 	int clk_table2[] = { 60e6, 30e6, 15e6, 75e5, 375e4, 1875e3, 9375e2, 46875e1 };
 
@@ -830,14 +946,16 @@ static int ch347_spi_setup(struct spi_device *spi)
 			}
 		}
 	}
-
+	mutex_lock(&ch34x_dev->io_mutex);
 	if (spi->chip_select == 0)
 		spicfg.ics = 0x80;
 	else if (spi->chip_select == 1)
 		spicfg.ics = 0x80 << 8;
-	else
-		return -EINVAL;
-
+	else {
+		ret = -EINVAL;
+		goto exit;
+	}
+	
 	switch (spi->mode) {
 	case SPI_MODE_0:
 		spicfg.imode = 0;
@@ -864,6 +982,8 @@ static int ch347_spi_setup(struct spi_device *spi)
 				}
 				clock_index = j / 8 + 1;
 				scale = clk_table1[j] / clk_table1[clock_index * 8 - 1];
+				if (clock_index == 2)
+					clock_index = 5;
 				spicfg.iclock = 7;
 				while (scale / 2) {
 					spicfg.iclock--;
@@ -918,12 +1038,10 @@ static int ch347_spi_setup(struct spi_device *spi)
 	/* delay time of read and write operation after canceling CS, unit: us */
 	spicfg.ideactive_delay = 0;
 
-	mutex_lock(&ch34x_dev->io_mutex);
-
 	if ((ch34x_dev->firmver >= 0x0341) || (ch34x_dev->chiptype == CHIP_CH347F)) {
 		/* init spi interface */
 		if (ch347spi_clockinit(ch34x_dev, clock_index) == false) {
-			DEV_ERR(CH34X_USBDEV, "Failed to init SPI interface.");
+			DEV_ERR(CH34X_USBDEV, "Failed to init SPI clock.");
 			ret = -EPROTO;
 			goto exit;
 		} else
