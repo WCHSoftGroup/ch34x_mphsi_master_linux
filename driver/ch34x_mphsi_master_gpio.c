@@ -48,6 +48,18 @@ static bool ch347_irq_control(struct ch34x_device *ch34x_dev, u8 gpioindex, bool
 			cfg_data[gpioindex] |= BIT(1);
 			cfg_data[gpioindex] &= ~BIT(0);
 			break;
+		case IRQ_TYPE_LEVEL_HIGH:
+			cfg_data[gpioindex] &= ~BIT(4);
+			cfg_data[gpioindex] |= BIT(3);
+			cfg_data[gpioindex] &= ~BIT(1);
+			cfg_data[gpioindex] |= BIT(0);
+			break;
+		case IRQ_TYPE_LEVEL_LOW:
+			cfg_data[gpioindex] &= ~BIT(4);
+			cfg_data[gpioindex] |= BIT(3);
+			cfg_data[gpioindex] &= ~BIT(1);
+			cfg_data[gpioindex] &= ~BIT(0);
+			break;
 		default:
 			return false;
 		}
@@ -137,11 +149,36 @@ int ch347_irq_check(struct ch34x_device *ch34x_dev, u8 irq)
 	DEV_DBG(CH34X_USBDEV, "hardware irq=%d %d", irq, type);
 
 	spin_lock_irqsave(&ch34x_dev->irq_lock, flags);
+
+	switch (type) {
+	case IRQ_TYPE_EDGE_FALLING:
+	case IRQ_TYPE_EDGE_RISING:
+	case IRQ_TYPE_EDGE_BOTH:
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
-	handle_simple_irq(irq_data_to_desc(irq_get_irq_data(ch34x_dev->irq_base + irq)));
+		handle_edge_irq(irq_data_to_desc(irq_get_irq_data(ch34x_dev->irq_base + irq)));
 #else
-	handle_simple_irq(ch34x_dev->irq_base + irq, irq_data_to_desc(irq_get_irq_data(ch34x_dev->irq_base + irq)));
+		handle_edge_irq(ch34x_dev->irq_base + irq,
+				irq_data_to_desc(irq_get_irq_data(ch34x_dev->irq_base + irq)));
 #endif
+		break;
+	case IRQ_TYPE_LEVEL_HIGH:
+	case IRQ_TYPE_LEVEL_LOW:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
+		handle_level_irq(irq_data_to_desc(irq_get_irq_data(ch34x_dev->irq_base + irq)));
+#else
+		handle_level_irq(ch34x_dev->irq_base + irq,
+				 irq_data_to_desc(irq_get_irq_data(ch34x_dev->irq_base + irq)));
+#endif
+		break;
+	default:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
+		handle_simple_irq(irq_data_to_desc(irq_get_irq_data(ch34x_dev->irq_base + irq)));
+#else
+		handle_simple_irq(ch34x_dev->irq_base + irq,
+				  irq_data_to_desc(irq_get_irq_data(ch34x_dev->irq_base + irq)));
+#endif
+		break;
+	}
 	spin_unlock_irqrestore(&ch34x_dev->irq_lock, flags);
 
 	return 0;
@@ -157,7 +194,8 @@ int ch347_irq_probe(struct ch34x_device *ch34x_dev)
 	DEV_DBG(CH34X_USBDEV, "start");
 
 	ch34x_dev->irq.name = "ch34x";
-	ch34x_dev->irq.irq_enable = ch347_irq_enable;
+	ch34x_dev->irq.irq_unmask = ch347_irq_enable;
+	ch34x_dev->irq.irq_mask = ch347_irq_disable;
 	ch34x_dev->irq.irq_disable = ch347_irq_disable;
 	ch34x_dev->irq.irq_set_type = ch347_irq_set_type;
 

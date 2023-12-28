@@ -1,3 +1,5 @@
+CONFIG_MODULE_SIG=n
+
 DRIVERNAME := ch34x_mphsi_master
 all : modules
 
