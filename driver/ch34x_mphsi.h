@@ -37,7 +37,7 @@
 #define DRIVER_AUTHOR "WCH"
 #define DRIVER_ALIAS  "spi/i2c/gpio: ch347/ch341"
 #define DRIVER_DESC   "USB to SPI/I2C/GPIO master driver for ch347/ch341, etc."
-#define VERSION_DESC  "V1.3 On 2023.12"
+#define VERSION_DESC  "V1.4 On 2024.02"
 
 /* check for condition and return with or without err code if it fails */
 #define CHECK_PARAM_RET(cond, err) \

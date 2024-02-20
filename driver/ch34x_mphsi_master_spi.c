@@ -1,7 +1,7 @@
 /*
  * ch347/ch341 MPHSI SPI driver layer
  *
- * Copyright (C) 2023 Nanjing Qinheng Microelectronics Co., Ltd.
+ * Copyright (C) 2024 Nanjing Qinheng Microelectronics Co., Ltd.
  * Web: http://wch.cn
  * Author: WCH <tech@wch.cn>
  *
@@ -187,6 +187,20 @@ exit:
 	return false;
 }
 
+void hwcfg_cpu_to_le(stream_hw_cfgs *hwcfg)
+{
+	hwcfg->spi_rw_interval = __cpu_to_le16(hwcfg->spi_rw_interval);
+	hwcfg->spi_initcfg.spi_direction = __cpu_to_le16(hwcfg->spi_initcfg.spi_direction);
+	hwcfg->spi_initcfg.spi_mode = __cpu_to_le16(hwcfg->spi_initcfg.spi_mode);
+	hwcfg->spi_initcfg.spi_datasize = __cpu_to_le16(hwcfg->spi_initcfg.spi_datasize);
+	hwcfg->spi_initcfg.s_spi_cpol = __cpu_to_le16(hwcfg->spi_initcfg.s_spi_cpol);
+	hwcfg->spi_initcfg.s_spi_cpha = __cpu_to_le16(hwcfg->spi_initcfg.s_spi_cpha);
+	hwcfg->spi_initcfg.spi_nss = __cpu_to_le16(hwcfg->spi_initcfg.spi_nss);
+	hwcfg->spi_initcfg.spi_baudrate_scale = __cpu_to_le16(hwcfg->spi_initcfg.spi_baudrate_scale);
+	hwcfg->spi_initcfg.spi_firstbit = __cpu_to_le16(hwcfg->spi_initcfg.spi_firstbit);
+	hwcfg->spi_initcfg.spi_crc_poly = __cpu_to_le16(hwcfg->spi_initcfg.spi_crc_poly);
+}
+
 /**
  * spicfg_to_hwcfg - update spi setting to hardware
  * @spicfg: pointer to spi configuration
@@ -227,9 +241,8 @@ bool spicfg_to_hwcfg(mspi_cfgs *spicfg, stream_hw_cfgs *hwcfg)
 		hwcfg->spi_initcfg.s_spi_cpol = SPI_CPOL_High;
 		break;
 	}
-	hwcfg->spi_initcfg.s_spi_cpha = __cpu_to_le16(hwcfg->spi_initcfg.s_spi_cpha);
-	hwcfg->spi_initcfg.s_spi_cpol = __cpu_to_le16(hwcfg->spi_initcfg.s_spi_cpol);
-	hwcfg->spi_initcfg.spi_baudrate_scale = __cpu_to_le16(spicfg->iclock * 8);
+
+	hwcfg->spi_initcfg.spi_baudrate_scale = spicfg->iclock * 8;
 	hwcfg->spi_outdef = spicfg->ispi_out_def;
 	hwcfg->spi_rw_interval = spicfg->ispi_rw_interval;
 
@@ -242,6 +255,8 @@ bool spicfg_to_hwcfg(mspi_cfgs *spicfg, stream_hw_cfgs *hwcfg)
 		hwcfg->misc_cfg |= 0x40;
 	else
 		hwcfg->misc_cfg &= ~0x40;
+
+	hwcfg_cpu_to_le(hwcfg);
 
 	return true;
 }
@@ -760,7 +775,6 @@ static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_me
 	if ((ch34x_dev->firmver >= 0x0341) || (ch34x_dev->chiptype == CHIP_CH347F)) {
 		rbuf = kmalloc(MAX_BUFFER_LENGTH * 2, GFP_KERNEL);
 		if (!rbuf) {
-			printk("%s kmalloc failed.\n", __func__);
 			return -ENOMEM;
 		}
 
@@ -771,13 +785,12 @@ static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_me
 		list_for_each_entry(xfer, &msg->transfers, transfer_list) {
 			if ((xfer->tx_buf || xfer->rx_buf) && xfer->len) {
 				if (xfer->len > (MAX_BUFFER_LENGTH - USB20_CMD_HEADER)) {
-					printk("%s xfer->len: %d too long.\n", __func__, xfer->len);
+					dev_err(&msg->spi->dev, "%s xfer->len: %d too long.\n", __func__, xfer->len);
 					ret = -EPROTO;
 					goto out;
 				}
 				bytes_to_copy = ch347_spi_build_packet(ch34x_dev, msg->spi, xfer);
 				if (bytes_to_copy < 0) {
-					printk("%s ch347_spi_build_packet error: %d.\n", __func__, bytes_to_copy);
 					ret = -EIO;
 					goto out;
 				}
@@ -787,7 +800,6 @@ static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_me
 					dev_err(&msg->spi->dev, "Bufferless transfer has length %u\n", xfer->len);
 			}
 			if (msg->status != -EINPROGRESS) {
-				printk("%s msg->status error: %d.\n", __func__, msg->status);
 				goto out;
 			}
 		}
@@ -802,21 +814,18 @@ static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_me
 		/* usb transfer */
 		ret = ch34x_usb_transfer(ch34x_dev, bytes_to_xfer, 0);
 		if (ret != bytes_to_xfer) {
-			printk("%s ch34x_usb_transfer error, ret: %d, bytes_to_xfer: %d.\n", __func__, ret, bytes_to_xfer);
 			ret = -EIO;
 			goto out;
 		}
 
 		ret = ch34x_usb_transfer(ch34x_dev, 0, bytes_to_xfer);
 		if (ret != bytes_to_xfer) {
-			printk("%s ch34x_usb_transfer error2, ret: %d, bytes_to_xfer: %d.\n", __func__, ret, bytes_to_xfer);
 			ret = -EIO;
 			goto out;
 		}
 
 		/* fill input data with input buffer */
 		if (ch34x_dev->bulkin_buf[0] != USB20_CMD_SPI_RD_WR) {
-			printk("%s ch34x_usb_transfer error3, bulkin_buf[0]: 0x%2x.\n", __func__, ch34x_dev->bulkin_buf[0]);
 			ret = -EIO;
 			goto out;
 		}
@@ -835,7 +844,6 @@ static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_me
 			}
 
 			if (msg->status != -EINPROGRESS) {
-				printk("%s msg->status2 error: %d.\n", __func__, msg->status);
 				goto out;
 			}
 
@@ -955,7 +963,7 @@ static int ch347_spi_setup(struct spi_device *spi)
 		ret = -EINVAL;
 		goto exit;
 	}
-	
+
 	switch (spi->mode) {
 	case SPI_MODE_0:
 		spicfg.imode = 0;
