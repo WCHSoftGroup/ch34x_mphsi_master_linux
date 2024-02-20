@@ -1,7 +1,7 @@
 /*
  * ch347/ch341 MPHSI I2C driver layer
  *
- * Copyright (C) 2023 Nanjing Qinheng Microelectronics Co., Ltd.
+ * Copyright (C) 2024 Nanjing Qinheng Microelectronics Co., Ltd.
  * Web: http://wch.cn
  * Author: WCH <tech@wch.cn>
  *

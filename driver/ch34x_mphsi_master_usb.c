@@ -1,7 +1,7 @@
 /*
  * USB to SPI/I2C/GPIO master driver for USB converter chip ch347/ch341, etc.
  *
- * Copyright (C) 2023 Nanjing Qinheng Microelectronics Co., Ltd.
+ * Copyright (C) 2024 Nanjing Qinheng Microelectronics Co., Ltd.
  * Web: http://wch.cn
  * Author: WCH <tech@wch.cn>
  *
@@ -16,6 +16,8 @@
  * V1.2 - add supports for i2c communication of long packets, use workqueue to implement irq setting operation,
  *      - support more spi clock frequency
  * V1.3 - add supports for gpio level triggered interrupt, add mutex in ch347_spi_transfer_one_message
+ * V1.4 - fix the big-endian CPU compatibility issue during SPI configuration
+ *      - fix the problem that obtaining GPIO status will change GPIO configuration
  */
 
 #include "ch34x_mphsi.h"
@@ -628,4 +630,5 @@ module_usb_driver(ch34x_usb_driver);
 MODULE_ALIAS(DRIVER_ALIAS);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
+MODULE_VERSION(VERSION_DESC);
 MODULE_LICENSE("GPL");

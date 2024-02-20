@@ -1,7 +1,7 @@
 /*
  * ch347/ch341 MPHSI GPIO and IRQ driver layer
  *
- * Copyright (C) 2023 Nanjing Qinheng Microelectronics Co., Ltd.
+ * Copyright (C) 2024 Nanjing Qinheng Microelectronics Co., Ltd.
  * Web: http://wch.cn
  * Author: WCH <tech@wch.cn>
  *
@@ -383,7 +383,7 @@ static int ch34x_mphsi_gpio_set_direction(struct gpio_chip *chip, unsigned offse
 	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
 	CHECK_PARAM_RET(offset < ch34x_dev->gpio_num, -EINVAL);
 
-	DEV_DBG(CH34X_USBDEV, "gpio=%d direction=%s", gpioindex, input ? "input" : "output");
+	DEV_DBG(CH34X_USBDEV, "gpio=%d set direction=%s", gpioindex, input ? "input" : "output");
 
 	ch34x_dev->gpio_pins[offset]->mode = input ? GPIO_MODE_IN : GPIO_MODE_OUT;
 
@@ -418,16 +418,10 @@ static int ch34x_mphsi_gpio_get(struct gpio_chip *chip, unsigned offset)
 	u8 cfg_data[CH347_GPIO_CNT] = { 0 };
 	u8 idir, idata;
 	u8 gpioindex = ch34x_dev->gpio_pins[offset]->gpioindex;
-	int i;
 	int retval;
 
 	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
 	CHECK_PARAM_RET(offset < ch34x_dev->gpio_num, -EINVAL);
-
-	for (i = 0; i < CH347_GPIO_CNT; i++)
-		cfg_data[i] = 0x00;
-
-	cfg_data[gpioindex] = BIT(7);
 
 	retval = ch347gpio_get(ch34x_dev, cfg_data, &idir, &idata);
 	if (retval)
@@ -454,7 +448,7 @@ static void ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int va
 	CHECK_PARAM(ch34x_dev);
 	CHECK_PARAM(offset < ch34x_dev->gpio_num);
 
-	DEV_DBG(CH34X_USBDEV, "offset=%u value=%d", offset, value);
+	DEV_DBG(CH34X_USBDEV, "offset=%u, gpio%d, value=%d", offset, gpioindex, value);
 
 	ienable = 1 << gpioindex;
 	idirout = 1 << gpioindex;
