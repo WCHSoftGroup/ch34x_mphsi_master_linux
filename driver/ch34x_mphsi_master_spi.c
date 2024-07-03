@@ -17,6 +17,8 @@
 #define SPIDEV
 #undef SPIDEV
 
+#define SPI_DMA_XFER 0
+
 #define ch34x_spi_maser_to_dev(m) *((struct ch34x_device **)spi_master_get_devdata(m))
 
 static int param_bus_num = -1;
@@ -772,7 +774,7 @@ static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_me
 
 	mutex_lock(&ch34x_dev->io_mutex);
 
-	if ((ch34x_dev->firmver >= 0x0341) || (ch34x_dev->chiptype == CHIP_CH347F)) {
+	if (((ch34x_dev->firmver >= 0x0341) || (ch34x_dev->chiptype == CHIP_CH347F)) && SPI_DMA_XFER) {
 		rbuf = kmalloc(MAX_BUFFER_LENGTH * 2, GFP_KERNEL);
 		if (!rbuf) {
 			return -ENOMEM;
