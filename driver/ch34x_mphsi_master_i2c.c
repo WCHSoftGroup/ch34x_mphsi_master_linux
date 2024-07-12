@@ -366,6 +366,7 @@ static int ch34x_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int
 		goto exit;
 	}
 	mutex_unlock(&ch34x_dev->io_mutex);
+	kfree(txbuf);
 	return num;
 
 exit:
