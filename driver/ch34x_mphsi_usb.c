@@ -474,7 +474,7 @@ static int ch34x_usb_probe(struct usb_interface *intf, const struct usb_device_i
 		DEV_DBG(CH34X_USBDEV, "Firmware version: 0x%x.", ch34x_dev->firmver);
 	}
 
-	ch34x_dev->id = ida_simple_get(&ch34x_devid_ida, 0, 0, GFP_KERNEL);
+	ch34x_dev->id = ida_alloc_range(&ch34x_devid_ida, 0, -1, GFP_KERNEL);
 	if (ch34x_dev->id < 0) {
 		ret = ch34x_dev->id;
 		goto error;
@@ -541,7 +541,7 @@ error2:
 	ch34x_mphsi_spi_remove(ch34x_dev);
 error1:
 	ch34x_cfg_remove(ch34x_dev);
-	ida_simple_remove(&ch34x_devid_ida, ch34x_dev->id);
+	ida_free(&ch34x_devid_ida, ch34x_dev->id);
 error:
 	if (ch34x_dev->bulkin_buf)
 		kfree(ch34x_dev->bulkin_buf);
@@ -611,7 +611,7 @@ static void ch34x_usb_disconnect(struct usb_interface *intf)
 	ch34x_spi_remove(ch34x_dev);
 	ch34x_mphsi_spi_remove(ch34x_dev);
 	ch34x_cfg_remove(ch34x_dev);
-	ida_simple_remove(&ch34x_devid_ida, ch34x_dev->id);
+	ida_free(&ch34x_devid_ida, ch34x_dev->id);
 	if (ch34x_dev->bulkin_buf)
 		kfree(ch34x_dev->bulkin_buf);
 	if (ch34x_dev->bulkout_buf)
