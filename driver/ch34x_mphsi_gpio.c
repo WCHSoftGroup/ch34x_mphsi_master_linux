@@ -440,7 +440,12 @@ static int ch34x_mphsi_gpio_get(struct gpio_chip *chip, unsigned offset)
 	return value;
 }
 
-static void ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
+static int ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int value);
+static void ch34x_mphsi_gpio_set_nrv(struct gpio_chip *chip, unsigned offset, int value) {
+	ch34x_mphsi_gpio_set(chip, offset, value);
+}
+ 
+static int ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
 	struct ch34x_device *ch34x_dev = (struct ch34x_device *)gpiochip_get_data(chip);
@@ -451,8 +456,8 @@ static void ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int va
 	u8 ienable = 0x00, idirout = 0x00, idataout = 0x00;
 	u8 gpioindex = ch34x_dev->gpio_pins[offset]->gpioindex;
 
-	CHECK_PARAM(ch34x_dev);
-	CHECK_PARAM(offset < ch34x_dev->gpio_num);
+	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
+	CHECK_PARAM_RET(offset < ch34x_dev->gpio_num, -EINVAL);
 
 	DEV_DBG(CH34X_USBDEV, "offset=%u, gpio%d, value=%d", offset, gpioindex, value);
 
@@ -461,7 +466,7 @@ static void ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int va
 	if (value)
 		idataout = 1 << gpioindex;
 
-	ch347gpio_set(ch34x_dev, ienable, idirout, idataout);
+	return ch347gpio_set(ch34x_dev, ienable, idirout, idataout);
 }
 
 static int ch34x_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
@@ -528,7 +533,11 @@ int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev)
 	gpio->direction_input = ch34x_mphsi_gpio_direction_input;
 	gpio->direction_output = ch34x_mphsi_gpio_direction_output;
 	gpio->get = ch34x_mphsi_gpio_get;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
 	gpio->set = ch34x_mphsi_gpio_set;
+#else
+	gpio->set = ch34x_mphsi_gpio_set_nrv;
+#endif
 	gpio->to_irq = ch34x_gpio_to_irq;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
