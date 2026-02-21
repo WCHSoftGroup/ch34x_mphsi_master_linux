@@ -15,7 +15,7 @@
 #include "ch34x_mphsi.h"
 
 #define SYSFS_GPIO
-//#undef SYSFS_GPIO
+#undef SYSFS_GPIO
 
 /* parameters */
 static int param_gpio_base = -1;
@@ -576,9 +576,10 @@ void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev)
 
 	if (ch34x_dev->gpio.base > 0) {
 #ifdef SYSFS_GPIO
-		for (i = 0; i < ch34x_dev->gpio_num; i++)
+		for (i = 0; i < ch34x_dev->gpio_num; i++) {
 			gpiod_unexport(gpio_to_desc(ch34x_dev->gpio.base + i) );
 			gpio_free(ch34x_dev->gpio.base + i);
+		}
 #endif
 		gpiochip_remove(&ch34x_dev->gpio);
 	}
