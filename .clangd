@@ -1,0 +1,9 @@
+CompileFlags:
+  Add:
+    [
+      "-I",
+      "/usr/src/linux-headers-6.12.63+deb13-common/include/",
+      "-I",
+      "/usr/src/linux-headers-6.12.63+deb13-amd64/arch/x86/include/generated",
+      "-DKBUILD_MODNAME=ch34x_usb",
+    ]
