@@ -1,8 +1,8 @@
-# CH347/CH341 linux USB to SPI/I2C/GPIO Master Driver
+# CH347/CH341 linux USB to SPI/I2C/GPIO Driver
 
 ## Description
 
-The Master driver supports the use of USB to UART/JTAG/SPI/I2C/GPIO conversion chip CH347F/T and USB to UART/SPI/I2C/GPIO conversion chip CH341A/B/C/F/H/T on Linux and Android hosts.
+The Driver supports the use of USB to UART/JTAG/SPI/I2C/GPIO conversion chip CH347F/T and USB to UART/SPI/I2C/GPIO conversion chip CH341A/B/C/F/H/T on Linux and Android hosts.
 
 This driver can only be used with SPI/I2C/GPIO interfaces. This document mainly introduces the relevant features of CH347F/T.
 
@@ -94,13 +94,13 @@ The GPIO hardware interface supports GPIO0~GPIO7 actually, but this driver only 
 
 ### Driver Operating Overview
 
-- Compile the driver using "make" or other method according to your environment, you will see the module "ch34x_mphsi_master.ko" if successful
+- Compile the driver using "make" or other method according to your environment, you will see the module "ch34x-usb.ko" if successful
 
-- Type "sudo make load" or "sudo insmod ch34x_mphsi_master.ko" to load the driver dynamically, in this way the spi bus number and gpio base number will be allocated dynamically, also they can be specified by parameters.
+- Type "sudo make load" or "sudo insmod ch34x-usb.ko" to load the driver dynamically, in this way the spi bus number and gpio base number will be allocated dynamically, also they can be specified by parameters.
 
-  exp: "sudo insmod ch34x_mphsi_master.ko spi_bus_num=3 gpio_base_num=60".
+  exp: "sudo insmod ch34x-usb.ko spi_bus_num=3 gpio_base_num=60".
 
-- Type "sudo make unload" or "sudo rmmod ch34x_mphsi_master.ko" to unload the driver
+- Type "sudo make unload" or "sudo rmmod ch34x-usb.ko" to unload the driver
 
 - Type "sudo make install" to make the driver work permanently
 
@@ -108,7 +108,7 @@ The GPIO hardware interface supports GPIO0~GPIO7 actually, but this driver only 
 
 Before the driver works, you should make sure that the USB device has been plugged in and is working properly, you can use shell command "lsusb" or "dmesg" to confirm that, VID of USB device is [1A86].
 
-If USB device works well, you can type "ls /sys/class/master" and "ls /sys/class/gpio" to confirm the master node.
+If USB device works well, you can type "ls /sys/class/spi_master" and "ls /sys/class/gpio" "ls /sys/class/i2c-dev"to confirm the class nodes.
 
 ## Usage from user space
 
@@ -130,11 +130,13 @@ Since linux-5.15 binding to spidev driver is required to make slave devices avai
 # echo spi0.1 > /sys/bus/spi/drivers/spidev/bind
 ```
 
-For all devices handled by ch34x_mphsi_master driver:
+For all devices handled by ch34x-usb driver:
 
 ```
 # for i in /sys/bus/usb/drivers/mphsi-ch34x/*/spi_master/spi*/spi*.*; do echo spidev > $i/driver_override; echo $(basename $i) > /sys/bus/spi/drivers/spidev/bind; done
 ```
+
+You can copy the 99-spi-ch34x-usb.rules file to /etc/udev/rules.d to do this automatically.
 
 Standard I/O functions like ```open```, ```ioctl``` and ```close``` can be used to communicate with one of the slaves connected to the SPI.
 
@@ -184,7 +186,7 @@ E.g. flash IC is attached to bus 0 chip 0 (spi0.0):
 # echo spi0.0 > /sys/bus/spi/drivers/spi-nor/bind
 ```
 
-**Please note:** this driver will create spidev devices by default, you can unbind the device using the above command, or undefine the macro "SPIDEV" in file ch34x_mphsi_master_spi.c. 
+**Please note:** this driver will create spidev devices by default, you can unbind the device using the above command, or undefine the macro "SPIDEV" in file ch34x_mphsi_spi.c. 
 
 ### Using GPIOs
 
@@ -341,7 +343,8 @@ MODULE_LICENSE("GPL");
 
 ```
 
-**Please note:** this driver will create gpio devices by default,  users should undefine the macro "SYSFS_GPIO" in file ch34x_mphsi_master_gpio.c before using gpio interruption in kernel.
+**Please note:** this driver will create gpio devices by default,  users should undefine the macro "SYSFS_GPIO" in file ch34x_mphsi_gpio.c before using gpio interruption in kernel. The /sys/class/gpio interface is depreciated in Linux >6.18.x unless the kernel is built with the LEGACY_SYSFS_GPIO option.
+
 
 ## Note
 

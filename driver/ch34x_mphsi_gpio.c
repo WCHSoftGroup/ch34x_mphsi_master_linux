@@ -15,16 +15,22 @@
 #include "ch34x_mphsi.h"
 
 #define SYSFS_GPIO
-#undef SYSFS_GPIO
+//#undef SYSFS_GPIO
 
 /* parameters */
 static int param_gpio_base = -1;
 module_param_named(gpio_base_num, param_gpio_base, int, 0600);
-MODULE_PARM_DESC(gpio_base_num, "GPIO master base number (if negative, dynamic allocation)");
+MODULE_PARM_DESC(gpio_base_num, "GPIO controller base number (if negative, dynamic allocation)");
 
 static int ch347gpio_control(struct ch34x_device *ch34x_dev, u8 *cfg_data, u8 *status_data);
 extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len, int in_len);
 static void irq_set_work(struct work_struct *work);
+int ch347_irq_check(struct ch34x_device *ch34x_dev, u8 irq);
+int ch347_irq_probe(struct ch34x_device *ch34x_dev);
+void ch347_irq_remove(struct ch34x_device *ch34x_dev);
+int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev);
+void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev);
+
 
 static bool ch347_irq_control(struct ch34x_device *ch34x_dev, u8 gpioindex, bool enable, unsigned int type)
 {
@@ -496,7 +502,7 @@ int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev)
 	struct gpio_chip *gpio = &ch34x_dev->gpio;
 	int result;
 #ifdef SYSFS_GPIO
-	int i, j = 0;
+	int i = 0;
 #endif
 
 	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
@@ -542,10 +548,10 @@ int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev)
 	for (i = 0; i < ch34x_dev->gpio_num; i++) {
 		result = gpio_request(gpio->base + i, "ch34x gpio expander");
 		if (result) {
-			DEV_ERR(CH34X_USBDEV, "Failed to allocate pin %d\n", gpio->base + j);
+			DEV_ERR(CH34X_USBDEV, "Failed to allocate pin %d\n", gpio->base + i);
 			return result;
 		}
-		result = gpio_export(gpio->base + i, true);
+		result = gpiod_export(gpio_to_desc(gpio->base + i), true);
 		if (result) {
 			DEV_ERR(CH34X_USBDEV, "failed to export gpio pin %d", gpio->base + i);
 			/* reduce number of GPIOs to avoid crashes during free in case of error */
@@ -570,7 +576,8 @@ void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev)
 
 	if (ch34x_dev->gpio.base > 0) {
 #ifdef SYSFS_GPIO
-		for (i = 0; i < ch34x_dev->gpio_num; ++i)
+		for (i = 0; i < ch34x_dev->gpio_num; i++)
+			gpiod_unexport(gpio_to_desc(ch34x_dev->gpio.base + i) );
 			gpio_free(ch34x_dev->gpio.base + i);
 #endif
 		gpiochip_remove(&ch34x_dev->gpio);

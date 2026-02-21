@@ -17,6 +17,9 @@
 extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len, int in_len);
 extern bool ch347_func_switch(struct ch34x_device *ch34x_dev, int index);
 
+int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev);
+void ch34x_mphsi_i2c_remove(struct ch34x_device *ch34x_dev);
+
 static int ch34x_i2c_check_dev(struct ch34x_device *ch34x_dev, u8 addr)
 {
 	int retval;
@@ -459,7 +462,7 @@ int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev)
 	/* and finally attach to i2c layer */
 	retval = i2c_add_adapter(&ch34x_dev->adapter);
 	if (retval < 0) {
-		dev_err(&ch34x_dev->adapter.dev, "register i2c master failed\n");
+		dev_err(&ch34x_dev->adapter.dev, "register i2c controller failed\n");
 		return -ENODEV;
 	}
 
@@ -487,7 +490,7 @@ int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev)
 		}
 	}
 
-	DEV_INFO(CH34X_USBDEV, "I2C master connected to I2C bus %d", ch34x_dev->adapter.nr);
+	DEV_INFO(CH34X_USBDEV, "I2C controller connected to I2C bus %d", ch34x_dev->adapter.nr);
 
 	return 0;
 
