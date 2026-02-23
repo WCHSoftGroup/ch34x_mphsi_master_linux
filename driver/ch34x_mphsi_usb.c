@@ -1,5 +1,5 @@
 /*
- * USB to SPI/I2C/GPIO master driver for USB converter chip ch347/ch341, etc.
+ * USB to SPI/I2C/GPIO controller driver for USB converter chip ch347/ch341, etc.
  *
  * Copyright (C) 2024 Nanjing Qinheng Microelectronics Co., Ltd.
  * Web: http://wch.cn
@@ -12,7 +12,7 @@
  *
  * Update Log:
  * V1.0 - initial version
- * V1.1 - add supports for i2c master, gpio irq function
+ * V1.1 - add supports for i2c controller, gpio irq function
  * V1.2 - add supports for i2c communication of long packets, use workqueue to implement irq setting operation,
  *      - support more spi clock frequency
  * V1.3 - add supports for gpio level triggered interrupt, add mutex in ch347_spi_transfer_one_message
@@ -42,7 +42,7 @@ struct ch341_pin_config ch341_board_config[CH341_CS_NUM] = {
 
 struct ch347_pin_config ch347t_board_config[CH347T_MPHSI_GPIOS] = {
 	{ 15, "gpio4", 4, GPIO_MODE_OUT, true },
-	{ 2, "gpio6", 6, GPIO_MODE_IN, true },
+	{ 2,  "gpio6", 6, GPIO_MODE_IN, true },
 	{ 13, "gpio7", 7, GPIO_MODE_OUT, true },
 };
 
@@ -68,6 +68,13 @@ extern void ch347_irq_remove(struct ch34x_device *ch34x_dev);
 extern int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev);
 extern void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev);
 extern int ch347_irq_check(struct ch34x_device *ch34x_dev, u8 irq);
+
+int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len, int in_len);
+bool ch347_get_chipinfo(struct ch34x_device *ch34x_dev);
+bool ch347_func_switch(struct ch34x_device *ch34x_dev, int index);
+void ch34x_mphsi_i2c_remove(struct ch34x_device *ch34x_dev);
+int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev);
+
 
 static int ch34x_cfg_probe(struct ch34x_device *ch34x_dev)
 {
@@ -467,7 +474,7 @@ static int ch34x_usb_probe(struct usb_interface *intf, const struct usb_device_i
 		DEV_DBG(CH34X_USBDEV, "Firmware version: 0x%x.", ch34x_dev->firmver);
 	}
 
-	ch34x_dev->id = ida_simple_get(&ch34x_devid_ida, 0, 0, GFP_KERNEL);
+	ch34x_dev->id = ida_alloc_range(&ch34x_devid_ida, 0, -1, GFP_KERNEL);
 	if (ch34x_dev->id < 0) {
 		ret = ch34x_dev->id;
 		goto error;
@@ -534,7 +541,7 @@ error2:
 	ch34x_mphsi_spi_remove(ch34x_dev);
 error1:
 	ch34x_cfg_remove(ch34x_dev);
-	ida_simple_remove(&ch34x_devid_ida, ch34x_dev->id);
+	ida_free(&ch34x_devid_ida, ch34x_dev->id);
 error:
 	if (ch34x_dev->bulkin_buf)
 		kfree(ch34x_dev->bulkin_buf);
@@ -604,7 +611,7 @@ static void ch34x_usb_disconnect(struct usb_interface *intf)
 	ch34x_spi_remove(ch34x_dev);
 	ch34x_mphsi_spi_remove(ch34x_dev);
 	ch34x_cfg_remove(ch34x_dev);
-	ida_simple_remove(&ch34x_devid_ida, ch34x_dev->id);
+	ida_free(&ch34x_devid_ida, ch34x_dev->id);
 	if (ch34x_dev->bulkin_buf)
 		kfree(ch34x_dev->bulkin_buf);
 	if (ch34x_dev->bulkout_buf)

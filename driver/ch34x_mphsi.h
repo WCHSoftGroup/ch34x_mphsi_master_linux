@@ -36,7 +36,7 @@
 
 #define DRIVER_AUTHOR "WCH"
 #define DRIVER_ALIAS  "spi/i2c/gpio: ch347/ch341"
-#define DRIVER_DESC   "USB to SPI/I2C/GPIO master driver for ch347/ch341, etc."
+#define DRIVER_DESC   "USB to SPI/I2C/GPIO driver for ch347/ch341, etc."
 #define VERSION_DESC  "V1.4 On 2024.02"
 
 /* check for condition and return with or without err code if it fails */
@@ -155,7 +155,6 @@
 #define GPIO_ENABLE  BIT(7)
 #define GPIO_DIR_SET BIT(6)
 
-#define ch34x_spi_maser_to_dev(m) *((struct ch34x_device **)spi_master_get_devdata(m))
 
 #ifndef USB_DEVICE_INTERFACE_NUMBER
 #define USB_DEVICE_INTERFACE_NUMBER(vend, prod, num)                                                    \
@@ -217,7 +216,7 @@ typedef struct _spi_init_typedef {
 	u16 spi_baudrate_scale; /* Specifies the Baud Rate prescaler value which will be
                                 used to configure the transmit and receive SCK clock.
                                 This parameter can be a value of @ref SPI_BaudRate_Prescaler.
-                                @note The communication clock is derived from the master
+                                @note The communication clock is derived from the controller
                                 clock. The slave clock does not need to be set. */
 	u16 spi_firstbit;	/* Specifies whether data transfers start from MSB or LSB bit.
                             This parameter can be a value of @ref SPI_MSB_LSB_transmission */
@@ -264,7 +263,7 @@ struct ch34x_device {
 
 	struct urb *intr_urb;
 
-	struct spi_master *master;
+	struct spi_controller *controller;
 	struct spi_device *slaves[CH341_SPI_MAX_NUM_DEVICES];
 	int slave_num;
 	bool last_cpol; /* last message CPOL */
@@ -299,7 +298,7 @@ struct ch34x_device {
 
 	struct delayed_work work;
 
-	/* i2c master */
+	/* i2c controller */
 	struct i2c_adapter adapter;
 	bool i2c_init;
 };

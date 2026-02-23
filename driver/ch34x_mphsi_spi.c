@@ -15,15 +15,30 @@
 #include "ch34x_mphsi.h"
 
 #define SPIDEV
-#undef SPIDEV
+//#undef SPIDEV
 
 #define SPI_DMA_XFER 0
 
-#define ch34x_spi_maser_to_dev(m) *((struct ch34x_device **)spi_master_get_devdata(m))
+#define ch34x_spi_controller_to_dev(m) *((struct ch34x_device **)spi_controller_get_devdata(m))
+
+int ch34x_mphsi_spi_probe(struct ch34x_device *ch34x_dev);
+int ch34x_mphsi_spi_remove(struct ch34x_device *ch34x_dev);
+bool ch347spi_get_hwcfg(struct ch34x_device *ch34x_dev, stream_hw_cfgs *streamcfg);
+bool ch347spi_clockinit(struct ch34x_device *ch34x_dev, u8 index);
+void hwcfg_cpu_to_le(stream_hw_cfgs *hwcfg);
+int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len, int in_len);
+bool spicfg_to_hwcfg(mspi_cfgs *spicfg, stream_hw_cfgs *hwcfg);
+bool ch347spi_init(struct ch34x_device *ch34x_dev, mspi_cfgs *spicfg);
+bool ch347_func_switch(struct ch34x_device *ch34x_dev, int index);
+bool ch347spi_change_cs(struct ch34x_device *ch34x_dev, u8 istatus);
+int ch34x_spi_probe(struct ch34x_device *ch34x_dev);
+void ch34x_spi_remove(struct ch34x_device *ch34x_dev);
+bool ch347spi_set_cs(struct ch34x_device *ch34x_dev, u16 ienable_cs, u16 ics, int iauto_de_cs, int iactive_delay, int ideactive_delay);
+
 
 static int param_bus_num = -1;
 module_param_named(spi_bus_num, param_bus_num, int, 0600);
-MODULE_PARM_DESC(spi_bus_num, "SPI master bus number (if negative, dynamic allocation)");
+MODULE_PARM_DESC(spi_bus_num, "SPI controller bus number (if negative, dynamic allocation)");
 
 struct spi_board_info ch34x_spi_devices[CH341_SPI_MAX_NUM_DEVICES];
 
@@ -112,20 +127,20 @@ static void ch341_spi_update_io_data(struct ch34x_device *ch34x_dev)
 
 static void ch341_spi_set_cs(struct spi_device *spi, bool active)
 {
-	struct ch34x_device *ch34x_dev = ch34x_spi_maser_to_dev(spi->master);
+	struct ch34x_device *ch34x_dev = ch34x_spi_controller_to_dev(spi->controller);
 
 	if (spi->mode & SPI_NO_CS)
 		return;
 
-	if (spi->chip_select > CH341_SPI_MAX_NUM_DEVICES) {
-		DEV_ERR(CH34X_USBDEV, "invalid CS value %d, 0~%d are available", spi->chip_select,
+	if (spi->chip_select[0] > CH341_SPI_MAX_NUM_DEVICES) {
+		DEV_ERR(CH34X_USBDEV, "invalid CS value %d, 0~%d are available", spi->chip_select[0],
 			CH341_SPI_MAX_NUM_DEVICES - 1);
 	}
 
 	if (active)
-		ch34x_dev->gpio_io_data &= ~(1 << spi->chip_select);
+		ch34x_dev->gpio_io_data &= ~(1 << spi->chip_select[0]);
 	else
-		ch34x_dev->gpio_io_data |= (1 << spi->chip_select);
+		ch34x_dev->gpio_io_data |= (1 << spi->chip_select[0]);
 
 	ch341_spi_update_io_data(ch34x_dev);
 }
@@ -409,17 +424,17 @@ bool ch347spi_change_cs(struct ch34x_device *ch34x_dev, u8 istatus)
 
 static bool ch347_spi_set_cs(struct spi_device *spi, bool active)
 {
-	struct ch34x_device *ch34x_dev = ch34x_spi_maser_to_dev(spi->master);
+	struct ch34x_device *ch34x_dev = ch34x_spi_controller_to_dev(spi->controller);
 
 	if (spi->mode & SPI_NO_CS)
 		return true;
 
-	if (spi->chip_select > CH347_SPI_MAX_NUM_DEVICES) {
-		DEV_ERR(CH34X_USBDEV, "invalid CS value %d, 0~%d are available", spi->chip_select,
+	if (spi->chip_select[0] > CH347_SPI_MAX_NUM_DEVICES) {
+		DEV_ERR(CH34X_USBDEV, "invalid CS value %d, 0~%d are available", spi->chip_select[0],
 			CH341_SPI_MAX_NUM_DEVICES - 1);
 	}
 
-	if (spi->chip_select == 0)
+	if (spi->chip_select[0] == 0)
 		ch34x_dev->spicfg.ics = 0x80;
 	else
 		ch34x_dev->spicfg.ics = 0x80 << 8;
@@ -518,7 +533,7 @@ static int ch341_spi_native(struct ch34x_device *ch34x_dev, struct spi_device *s
 	while (len) {
 		bytes_to_copy = min(len, CH341_USB_MAX_BULK_SIZE - 1);
 
-		/* fill output buffer with command and output data, master expects lsb first */
+		/* fill output buffer with command and output data, controller expects lsb first */
 		ch34x_dev->bulkout_buf[0] = CH341_CMD_SPI_STREAM;
 		if (lsb) {
 			memcpy(ch34x_dev->bulkout_buf + 1, tx, bytes_to_copy);
@@ -538,7 +553,7 @@ static int ch341_spi_native(struct ch34x_device *ch34x_dev, struct spi_device *s
 		}
 
 		if (rx) {
-			/* fill input data with input buffer, master delivers lsb first */
+			/* fill input data with input buffer, controller delivers lsb first */
 			if (lsb) {
 				memcpy(rx, ch34x_dev->bulkin_buf, bytes_to_copy);
 			} else {
@@ -683,9 +698,9 @@ static int ch34x_spi_transfer_one(struct ch34x_device *ch34x_dev, struct spi_dev
 	return result;
 }
 
-static int ch341_spi_transfer_one_message(struct spi_master *ctlr, struct spi_message *msg)
+static int ch341_spi_transfer_one_message(struct spi_controller *ctlr, struct spi_message *msg)
 {
-	struct ch34x_device *ch34x_dev = ch34x_spi_maser_to_dev(ctlr);
+	struct ch34x_device *ch34x_dev = ch34x_spi_controller_to_dev(ctlr);
 	struct spi_transfer *xfer;
 	bool keep_cs = false;
 	bool cpol = msg->spi->mode & SPI_CPOL;
@@ -761,9 +776,9 @@ static int ch347_spi_build_packet(struct ch34x_device *ch34x_dev, struct spi_dev
 	return len;
 }
 
-static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_message *msg)
+static int ch347_spi_transfer_one_message(struct spi_controller *ctlr, struct spi_message *msg)
 {
-	struct ch34x_device *ch34x_dev = ch34x_spi_maser_to_dev(ctlr);
+	struct ch34x_device *ch34x_dev = ch34x_spi_controller_to_dev(ctlr);
 	struct spi_transfer *xfer;
 	bool keep_cs = false;
 	int ret = 0;
@@ -805,7 +820,7 @@ static int ch347_spi_transfer_one_message(struct spi_master *ctlr, struct spi_me
 				goto out;
 			}
 		}
-		if (msg->spi->chip_select == 0) {
+		if (msg->spi->chip_select[0] == 0) {
 			ch34x_dev->bulkout_buf[1] = (u8)(bytes_to_xfer - USB20_CMD_HEADER);
 			ch34x_dev->bulkout_buf[2] = (u8)((bytes_to_xfer - USB20_CMD_HEADER) >> 8) | BIT(7) | BIT(6);
 		} else {
@@ -906,8 +921,8 @@ out:
 
 static int ch341_spi_setup(struct spi_device *spi)
 {
-	struct ch34x_device *ch34x_dev = ch34x_spi_maser_to_dev(spi->master);
-	u8 cs_mask = (1 << spi->chip_select);
+	struct ch34x_device *ch34x_dev = ch34x_spi_controller_to_dev(spi->controller);
+	u8 cs_mask = (1 << spi->chip_select[0]);
 
 	mutex_lock(&ch34x_dev->io_mutex);
 
@@ -923,8 +938,8 @@ static int ch341_spi_setup(struct spi_device *spi)
 
 static int ch347_spi_setup(struct spi_device *spi)
 {
-	struct spi_master *master = spi->master;
-	struct ch34x_device *ch34x_dev = ch34x_spi_maser_to_dev(spi->master);
+	struct spi_controller *controller = spi->controller;
+	struct ch34x_device *ch34x_dev = ch34x_spi_controller_to_dev(spi->controller);
 	mspi_cfgs spicfg = { 0 };
 	u8 scale;
 	int ret;
@@ -941,14 +956,14 @@ static int ch347_spi_setup(struct spi_device *spi)
 	int clk_table2[] = { 60e6, 30e6, 15e6, 75e5, 375e4, 1875e3, 9375e2, 46875e1 };
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 12, 0)
-	if (spi->max_speed_hz < master->min_speed_hz || spi->max_speed_hz > master->max_speed_hz)
+	if (spi->max_speed_hz < controller->min_speed_hz || spi->max_speed_hz > controller->max_speed_hz)
 		return -EINVAL;
 #else
 	if (spi->max_speed_hz < CH347_SPI_MIN_FREQ || spi->max_speed_hz > CH347_SPI_MAX_FREQ)
 		return -EINVAL;
 #endif
 
-	if (spi->chip_select == 1) {
+	if (spi->chip_select[0] == 1) {
 		if (ch34x_dev->chiptype == CHIP_CH347F) {
 			if (!ch347_func_switch(ch34x_dev, 0)) {
 				DEV_ERR(CH34X_USBDEV, "Failed to init SPI1 CS1 of CH347F.");
@@ -957,9 +972,9 @@ static int ch347_spi_setup(struct spi_device *spi)
 		}
 	}
 	mutex_lock(&ch34x_dev->io_mutex);
-	if (spi->chip_select == 0)
+	if (spi->chip_select[0] == 0)
 		spicfg.ics = 0x80;
-	else if (spi->chip_select == 1)
+	else if (spi->chip_select[0] == 1)
 		spicfg.ics = 0x80 << 8;
 	else {
 		ret = -EINVAL;
@@ -1026,12 +1041,12 @@ static int ch347_spi_setup(struct spi_device *spi)
 
 	/* BIT0：CS0/1 polar control, 0：low active, 1：high active */
 	if (spi->mode & SPI_CS_HIGH) {
-		if (spi->chip_select == 0)
+		if (spi->chip_select[0] == 0)
 			spicfg.cs0_polar = 1;
 		else
 			spicfg.cs1_polar = 1;
 	} else {
-		if (spi->chip_select == 0)
+		if (spi->chip_select[0] == 0)
 			spicfg.cs0_polar = 0;
 		else
 			spicfg.cs1_polar = 0;
@@ -1080,60 +1095,60 @@ int ch34x_spi_probe(struct ch34x_device *ch34x_dev)
 
 	DEV_DBG(CH34X_USBDEV, "start");
 
-	/* allocate a new SPI master with a pointer to ch34x_device as device data */
-	ch34x_dev->master = spi_alloc_master(CH34X_USBDEV, sizeof(struct ch34x_device *));
-	if (!ch34x_dev->master) {
-		DEV_ERR(CH34X_USBDEV, "SPI master allocation failed");
+	/* allocate a new SPI controller with a pointer to ch34x_device as device data */
+	ch34x_dev->controller = spi_alloc_host(CH34X_USBDEV, sizeof(struct ch34x_device *));
+	if (!ch34x_dev->controller) {
+		DEV_ERR(CH34X_USBDEV, "SPI controller allocation failed");
 		return -ENOMEM;
 	}
 
-	platform_set_drvdata(ch34x_dev->spi_pdev, ch34x_dev->master);
+	platform_set_drvdata(ch34x_dev->spi_pdev, ch34x_dev->controller);
 
-	/* save the pointer to ch34x_dev in the SPI master device data field */
-	ch34x_spi_maser_to_dev(ch34x_dev->master) = ch34x_dev;
+	/* save the pointer to ch34x_dev in the SPI controller device data field */
+	ch34x_spi_controller_to_dev(ch34x_dev->controller) = ch34x_dev;
 
-	/* set SPI master configuration */
-	ch34x_dev->master->bus_num = (param_bus_num >= 0) ? param_bus_num : -1;
+	/* set SPI controller configuration */
+	ch34x_dev->controller->bus_num = (param_bus_num >= 0) ? param_bus_num : -1;
 	if (ch34x_dev->chiptype == CHIP_CH341)
-		ch34x_dev->master->num_chipselect = CH341_SPI_MAX_NUM_DEVICES;
+		ch34x_dev->controller->num_chipselect = CH341_SPI_MAX_NUM_DEVICES;
 	else
-		ch34x_dev->master->num_chipselect = CH347_SPI_MAX_NUM_DEVICES;
-	ch34x_dev->master->mode_bits = SPI_MODE_3 | SPI_LSB_FIRST | SPI_CS_HIGH;
+		ch34x_dev->controller->num_chipselect = CH347_SPI_MAX_NUM_DEVICES;
+	ch34x_dev->controller->mode_bits = SPI_MODE_3 | SPI_LSB_FIRST | SPI_CS_HIGH;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
-	ch34x_dev->master->flags = SPI_MASTER_MUST_RX | SPI_MASTER_MUST_TX;
+	ch34x_dev->controller->flags = SPI_CONTROLLER_MUST_RX | SPI_CONTROLLER_MUST_TX;
 #endif
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5, 0, 0)
-	ch34x_dev->master->bits_per_word_mask = SPI_BPW_MASK(8);
+	ch34x_dev->controller->bits_per_word_mask = SPI_BPW_MASK(8);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-	ch34x_dev->master->bits_per_word_mask = SPI_BIT_MASK(8);
+	ch34x_dev->controller->bits_per_word_mask = SPI_BIT_MASK(8);
 #endif
 
 	if (ch34x_dev->chiptype == CHIP_CH341) {
-		ch34x_dev->master->transfer_one_message = ch341_spi_transfer_one_message;
-		ch34x_dev->master->setup = ch341_spi_setup;
+		ch34x_dev->controller->transfer_one_message = ch341_spi_transfer_one_message;
+		ch34x_dev->controller->setup = ch341_spi_setup;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 12, 0)
-		ch34x_dev->master->max_speed_hz = CH341_SPI_MAX_FREQ;
-		ch34x_dev->master->min_speed_hz = CH341_SPI_MIN_FREQ;
+		ch34x_dev->controller->max_speed_hz = CH341_SPI_MAX_FREQ;
+		ch34x_dev->controller->min_speed_hz = CH341_SPI_MIN_FREQ;
 #endif
 	} else {
-		ch34x_dev->master->transfer_one_message = ch347_spi_transfer_one_message;
-		ch34x_dev->master->setup = ch347_spi_setup;
+		ch34x_dev->controller->transfer_one_message = ch347_spi_transfer_one_message;
+		ch34x_dev->controller->setup = ch347_spi_setup;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 12, 0)
-		ch34x_dev->master->max_speed_hz = CH347_SPI_MAX_FREQ;
-		ch34x_dev->master->min_speed_hz = CH347_SPI_MIN_FREQ;
+		ch34x_dev->controller->max_speed_hz = CH347_SPI_MAX_FREQ;
+		ch34x_dev->controller->min_speed_hz = CH347_SPI_MIN_FREQ;
 #endif
 	}
 
-	/* register spi master */
-	if ((result = spi_register_master(ch34x_dev->master))) {
-		DEV_ERR(CH34X_USBDEV, "could not register SPI master");
-		spi_master_put(ch34x_dev->master);
-		ch34x_dev->master = 0;
+	/* register spi controller */
+	if ((result = spi_register_controller(ch34x_dev->controller))) {
+		DEV_ERR(CH34X_USBDEV, "could not register SPI controller");
+		spi_controller_put(ch34x_dev->controller);
+		ch34x_dev->controller = 0;
 		return result;
 	}
 
-	DEV_INFO(CH34X_USBDEV, "SPI master connected to SPI bus %d", ch34x_dev->master->bus_num);
+	DEV_INFO(CH34X_USBDEV, "SPI controller connected to SPI bus %d", ch34x_dev->controller->bus_num);
 
 	if (ch34x_dev->chiptype == CHIP_CH341) {
 		mutex_lock(&ch34x_dev->io_mutex);
@@ -1145,9 +1160,9 @@ int ch34x_spi_probe(struct ch34x_device *ch34x_dev)
 #ifdef SPIDEV
 	/* create SPI slaves */
 	for (i = 0; i < ch34x_dev->slave_num; i++) {
-		ch34x_spi_devices[i].bus_num = ch34x_dev->master->bus_num;
-		if ((ch34x_dev->slaves[i] = spi_new_device(ch34x_dev->master, &ch34x_spi_devices[i]))) {
-			DEV_INFO(CH34X_USBDEV, "SPI device /dev/spidev%d.%d created", ch34x_dev->master->bus_num,
+		ch34x_spi_devices[i].bus_num = ch34x_dev->controller->bus_num;
+		if ((ch34x_dev->slaves[i] = spi_new_device(ch34x_dev->controller, &ch34x_spi_devices[i]))) {
+			DEV_INFO(CH34X_USBDEV, "SPI device /dev/spidev%d.%d created", ch34x_dev->controller->bus_num,
 				 ch34x_spi_devices[i].chip_select);
 		}
 	}
@@ -1172,8 +1187,8 @@ void ch34x_spi_remove(struct ch34x_device *ch34x_dev)
 			spi_unregister_device(ch34x_dev->slaves[i]);
 #endif
 
-	if (ch34x_dev->master)
-		spi_unregister_master(ch34x_dev->master);
+	if (ch34x_dev->controller)
+		spi_unregister_controller(ch34x_dev->controller);
 
 	return;
 }

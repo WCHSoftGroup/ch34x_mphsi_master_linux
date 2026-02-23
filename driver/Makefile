@@ -1,11 +1,11 @@
 CONFIG_MODULE_SIG=n
 
-DRIVERNAME := ch34x_mphsi_master
+DRIVERNAME := ch34x-usb
 all : modules
 
 ifneq ($(KERNELRELEASE),)
 obj-m += $(DRIVERNAME).o
-$(DRIVERNAME)-y := ch34x_mphsi_master_usb.o ch34x_mphsi_master_spi.o ch34x_mphsi_master_i2c.o ch34x_mphsi_master_gpio.o
+$(DRIVERNAME)-y := ch34x_mphsi_usb.o ch34x_mphsi_spi.o ch34x_mphsi_i2c.o ch34x_mphsi_gpio.o
 else
 KERNELDIR := /lib/modules/$(shell uname -r)/build
 PWD	:= $(shell pwd)

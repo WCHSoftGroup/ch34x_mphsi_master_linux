@@ -20,11 +20,17 @@
 /* parameters */
 static int param_gpio_base = -1;
 module_param_named(gpio_base_num, param_gpio_base, int, 0600);
-MODULE_PARM_DESC(gpio_base_num, "GPIO master base number (if negative, dynamic allocation)");
+MODULE_PARM_DESC(gpio_base_num, "GPIO controller base number (if negative, dynamic allocation)");
 
 static int ch347gpio_control(struct ch34x_device *ch34x_dev, u8 *cfg_data, u8 *status_data);
 extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len, int in_len);
 static void irq_set_work(struct work_struct *work);
+int ch347_irq_check(struct ch34x_device *ch34x_dev, u8 irq);
+int ch347_irq_probe(struct ch34x_device *ch34x_dev);
+void ch347_irq_remove(struct ch34x_device *ch34x_dev);
+int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev);
+void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev);
+
 
 static bool ch347_irq_control(struct ch34x_device *ch34x_dev, u8 gpioindex, bool enable, unsigned int type)
 {
@@ -434,7 +440,12 @@ static int ch34x_mphsi_gpio_get(struct gpio_chip *chip, unsigned offset)
 	return value;
 }
 
-static void ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
+static int ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int value);
+static void ch34x_mphsi_gpio_set_nrv(struct gpio_chip *chip, unsigned offset, int value) {
+	ch34x_mphsi_gpio_set(chip, offset, value);
+}
+ 
+static int ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
 	struct ch34x_device *ch34x_dev = (struct ch34x_device *)gpiochip_get_data(chip);
@@ -445,8 +456,8 @@ static void ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int va
 	u8 ienable = 0x00, idirout = 0x00, idataout = 0x00;
 	u8 gpioindex = ch34x_dev->gpio_pins[offset]->gpioindex;
 
-	CHECK_PARAM(ch34x_dev);
-	CHECK_PARAM(offset < ch34x_dev->gpio_num);
+	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
+	CHECK_PARAM_RET(offset < ch34x_dev->gpio_num, -EINVAL);
 
 	DEV_DBG(CH34X_USBDEV, "offset=%u, gpio%d, value=%d", offset, gpioindex, value);
 
@@ -455,7 +466,7 @@ static void ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset, int va
 	if (value)
 		idataout = 1 << gpioindex;
 
-	ch347gpio_set(ch34x_dev, ienable, idirout, idataout);
+	return ch347gpio_set(ch34x_dev, ienable, idirout, idataout);
 }
 
 static int ch34x_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
@@ -496,7 +507,7 @@ int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev)
 	struct gpio_chip *gpio = &ch34x_dev->gpio;
 	int result;
 #ifdef SYSFS_GPIO
-	int i, j = 0;
+	int i = 0;
 #endif
 
 	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
@@ -522,7 +533,11 @@ int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev)
 	gpio->direction_input = ch34x_mphsi_gpio_direction_input;
 	gpio->direction_output = ch34x_mphsi_gpio_direction_output;
 	gpio->get = ch34x_mphsi_gpio_get;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
 	gpio->set = ch34x_mphsi_gpio_set;
+#else
+	gpio->set = ch34x_mphsi_gpio_set_nrv;
+#endif
 	gpio->to_irq = ch34x_gpio_to_irq;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
@@ -542,10 +557,10 @@ int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev)
 	for (i = 0; i < ch34x_dev->gpio_num; i++) {
 		result = gpio_request(gpio->base + i, "ch34x gpio expander");
 		if (result) {
-			DEV_ERR(CH34X_USBDEV, "Failed to allocate pin %d\n", gpio->base + j);
+			DEV_ERR(CH34X_USBDEV, "Failed to allocate pin %d\n", gpio->base + i);
 			return result;
 		}
-		result = gpio_export(gpio->base + i, true);
+		result = gpiod_export(gpio_to_desc(gpio->base + i), true);
 		if (result) {
 			DEV_ERR(CH34X_USBDEV, "failed to export gpio pin %d", gpio->base + i);
 			/* reduce number of GPIOs to avoid crashes during free in case of error */
@@ -570,8 +585,10 @@ void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev)
 
 	if (ch34x_dev->gpio.base > 0) {
 #ifdef SYSFS_GPIO
-		for (i = 0; i < ch34x_dev->gpio_num; ++i)
+		for (i = 0; i < ch34x_dev->gpio_num; i++) {
+			gpiod_unexport(gpio_to_desc(ch34x_dev->gpio.base + i) );
 			gpio_free(ch34x_dev->gpio.base + i);
+		}
 #endif
 		gpiochip_remove(&ch34x_dev->gpio);
 	}
