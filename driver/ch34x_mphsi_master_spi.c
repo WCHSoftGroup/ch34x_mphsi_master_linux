@@ -969,7 +969,7 @@ static int ch347_spi_build_packet(struct ch34x_device *ch34x_dev,
 static int ch347_spi_transfer_setup(struct ch34x_device *ch34x_dev,
 				    struct spi_transfer *first_xfer)
 {
-	u8 clock_index;
+	u8 clock_index = 0;
 	int i, j, ret = 0;
 	u8 scale;
 	int clk_table0[] = { 60e6,    48e6,   36e6,    30e6,   28e6,
@@ -1592,7 +1592,7 @@ int ch34x_spi_probe(struct ch34x_device *ch34x_dev)
 	int result;
 #ifdef SPI_AUTOPROBE
 	int gpio_index;
-	struct spi_board_info ch34x_spi_slaves[3] = { 0 };
+	struct spi_board_info ch34x_spi_slaves[3] = { {0}, {0}, {0} };
 #endif
 
 	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
