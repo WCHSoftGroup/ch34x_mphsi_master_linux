@@ -167,8 +167,7 @@ int ch347_irq_check(struct ch34x_device *ch34x_dev, u8 irq)
 		irq_get_irq_data(ch34x_dev->irq_base + irq)));
 #else
 	handle_simple_irq(ch34x_dev->irq_base + irq,
-			  irq_data_to_desc(irq_get_irq_data(
-				  ch34x_dev->irq_base + irq)));
+			  irq_to_desc(ch34x_dev->irq_base + irq));
 #endif
 
 	spin_unlock_irqrestore(&ch34x_dev->irq_lock, flags);
