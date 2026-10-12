@@ -39,10 +39,10 @@
 	dev_info(d, "%s: " f "\n", __FUNCTION__, ##__VA_ARGS__)
 
 #define DRIVER_AUTHOR "WCH"
-#define DRIVER_ALIAS "SPI/I2C/GPIO: CH347/CH341"
+#define DRIVER_ALIAS "SPI/I2C/GPIO: CH347/CH341/CH339/CH9341"
 #define DRIVER_DESC \
-	"USB to SPI/I2C/GPIO controller driver for CH347/CH341, etc."
-#define VERSION_DESC "V1.7 On 2026.06"
+	"USB to SPI/I2C/GPIO controller driver for CH347/CH341/CH339/CH9341, etc."
+#define VERSION_DESC "V1.7 On 2026.09"
 
 /* Check for condition and return with or without err code if it fails */
 #define CHECK_PARAM_RET(cond, err) \
@@ -52,7 +52,12 @@
 	if (!(cond))      \
 		return;
 
-#define MAX_BUFFER_LENGTH 0x1000
+#define MAX_BUFFER_LENGTH (64 * 1024)
+
+#define CH34X_SPI_MAX_NUM_DEVICES 8
+#define CH34X_I2C_MAX_NUM_DEVICES 16
+#define CH34X_MAX_GPIOS 64
+#define CH34X_SPI_MAX_XFER_SIZE (64 * 1024 - 16 * USB20_CMD_HEADER)
 
 #define CH341_CS_NUM 3
 
@@ -62,12 +67,6 @@
 #define CH341_CMD_SPI_STREAM 0xA8 /* CH341 SPI command */
 #define CH341_CMD_UIO_STREAM 0xAB /* UIO command */
 
-#define CH341_CMD_UIO_STM_IN 0x00 /* UIO IN  command (D0~D7) */
-#define CH341_CMD_UIO_STM_OUT 0x80 /* UIO OUT command (D0~D5) */
-#define CH341_CMD_UIO_STM_DIR 0x40 /* UIO DIR command (D0~D5) */
-#define CH341_CMD_UIO_STM_END 0x20 /* UIO END command */
-#define CH341_CMD_UIO_STM_US 0xc0 /* UIO US  command */
-
 #define CH341_SPI_MAX_NUM_DEVICES 3
 #define CH341_SPI_BUS_NUM 0
 #define CH341_SPI_MODE SPI_MODE_0
@@ -76,65 +75,87 @@
 #define CH341_SPI_MIN_BITS_PER_WORD 4
 #define CH341_SPI_MAX_BITS_PER_WORD 32
 
-#define CH34X_I2C_MAX_NUM_DEVICES 16
+#define CH341_CMD_SPI_STREAM 0xA8
+#define CH341_CMD_UIO_STREAM 0xAB
+#define CH341_CMD_UIO_STM_IN 0x00
+#define CH341_CMD_UIO_STM_OUT 0x80
+#define CH341_CMD_UIO_STM_DIR 0x40
+#define CH341_CMD_UIO_STM_END 0x20
+#define CH341_CMD_UIO_STM_US 0xC0
 
-#define SCK_BIT (1 << 3)
-#define MOSI_BIT (1 << 5)
-#define MISO_BIT (1 << 7)
+#define CH341_CMD_I2C_STREAM 0xAA
+#define CH341_CMD_I2C_STM_STA 0x74
+#define CH341_CMD_I2C_STM_STO 0x75
+#define CH341_CMD_I2C_STM_OUT 0x80
+#define CH341_CMD_I2C_STM_IN 0xC0
+#define CH341_CMD_I2C_STM_SET 0x60
+#define CH341_CMD_I2C_STM_END 0x00
 
 #define CH347_CS_NUM 2
-#define CH339_CS_NUM 1
-
-#define CH347_USB_MAX_BULK_SIZE 510
+#define CH347_SPI_MAX_BULK_SIZE (4096 - USB20_CMD_HEADER)
 #define CH347_USB_BULK_EPSIZE 512
 #define CH347_USB_MAX_INTR_SIZE 512
 
 #define CH347_MAX_GPIOS 8
 #define CH347F_MPHSI_GPIOS 8
 #define CH347T_MPHSI_GPIOS 3
-#define CH339W_MPHSI_GPIOS 3
-
-#define CH347_CMD_SPI_STREAM 0xA8 /* CH347 SPI command */
 
 #define CH347_SPI_MAX_NUM_DEVICES 2
-#define CH339_SPI_MAX_NUM_DEVICES 1
-#define CH347_SPI_BUS_NUM 0
-#define CH347_SPI_MODE SPI_MODE_0
 #define CH347_SPI_MIN_FREQ 218750
 #define CH347_SPI_MAX_FREQ 60e6
-#define CH347_SPI_MIN_BITS_PER_WORD 4
-#define CH347_SPI_MAX_BITS_PER_WORD 32
 
-#define USB20_CMD_HEADER 3
-#define USB20_CMD_SPI_INIT 0xC0 /* SPI Init Command */
-#define USB20_CMD_SPI_CONTROL \
-	0xC1 /* SPI Control Command, used to control the SPI interface chip selection pin output high or low level and delay time */
-#define USB20_CMD_SPI_RD_WR \
-	0xC2 /* SPI general read and write command, used for SPI general read and write operation, and for short packet communication */
-#define USB20_CMD_SPI_BLCK_RD \
-	0xC3 /* SPI read data command in batch, is generally used for the batch data read operation. */
-#define USB20_CMD_SPI_BLCK_WR \
-	0xC4 /* SPI write data command in batch, is generally used for the batch data write operation. */
-#define USB20_CMD_INFO_RD \
-	0xCA /* Parameter acquisition command, used to obtain SPI interface related parameters, etc */
-#define USB20_CMD_SPI_CLK_INIT 0xE1 /* System clock control command */
-#define USB20_CMD_FUNC_SWITCH 0xE2 /* CH347F function switch command */
+#define GPIO_MODE_IN 0
+#define GPIO_MODE_OUT 1
+#define CH347_GPIO_CNT 8
 
-/*SPI CMD*/
+#define SCK_BIT (1 << 3)
+#define MOSI_BIT (1 << 5)
+#define MISO_BIT (1 << 7)
+
 #define SET_CS 0
 #define CLR_CS 1
 #define SPI_CS_ACTIVE 0x00
 #define SPI_CS_DEACTIVE 0x01
 
-/* SPI_Clock_Polarity */
 #define SPI_CPOL_Low ((u16)0x0000)
 #define SPI_CPOL_High ((u16)0x0002)
 
-/* SPI_Clock_Phase */
 #define SPI_CPHA_1Edge ((u16)0x0000)
 #define SPI_CPHA_2Edge ((u16)0x0001)
 
-/******************************************************/
+#define USB20_CMD_HEADER 3
+#define USB20_CMD_SPI_INIT 0xC0
+#define USB20_CMD_SPI_CONTROL 0xC1
+#define USB20_CMD_SPI_RD_WR 0xC2
+#define USB20_CMD_SPI_BLCK_RD 0xC3
+#define USB20_CMD_SPI_BLCK_WR 0xC4
+#define USB20_CMD_INFO_RD 0xCA
+#define USB20_CMD_SPI_CLK_INIT 0xE1
+#define USB20_CMD_FUNC_SWITCH 0xE2
+
+#define CH347_CMD_I2C_STM_MAX 0x3F
+#define CH347_CMD_I2C_STRETCH_Y 0x15
+#define CH347_CMD_I2C_STRETCH_N 0x16
+
+#define USB20_CMD_GPIO_CMD 0xCC
+
+#define CH339_CS_NUM 1
+#define CH339W_MPHSI_GPIOS 3
+#define CH339_SPI_MAX_NUM_DEVICES 1
+
+#define CH9341C_MPHSI_GPIOS 10
+#define CH9341_SPI_MAX_LENGTH 0x1000
+#define CH9341C_MAX_GPIOS 6
+
+#define CH9341_CS_NUM 4
+#define CH9341_SPI_MAX_NUM_DEVICES 4
+#define CH9341_SPI_MIN_FREQ 750e3
+#define CH9341_SPI_MAX_FREQ 24e6
+
+#define CH9341_USB_MAX_BULK_SIZE 64
+#define CH9341_USB_MAX_INTR_SIZE 12
+
+#define CH9341_CMD_HEADER 4
 
 #define I2C_SPEED_20K 0
 #define I2C_SPEED_50K 4
@@ -145,29 +166,27 @@
 #define I2C_SPEED_1M 6
 #define I2C_SPEED_2M 7
 
-#define CH341_CMD_I2C_STREAM 0xAA
+#define CH9341_CMD_GPIO_FUN_SET 0xCE
+#define CH9341_GPIO_CNT 10
 
-#define CH341_CMD_I2C_STM_STA 0x74
-#define CH341_CMD_I2C_STM_STO 0x75
-#define CH341_CMD_I2C_STM_OUT 0x80
-#define CH341_CMD_I2C_STM_IN 0xC0
-#define CH341_CMD_I2C_STM_SET 0x60
-#define CH341_CMD_I2C_STM_END 0x00
-#define CH347_CMD_I2C_STM_MAX 0x3F
-#define CH347_CMD_I2C_STRETCH_Y 0x15
-#define CH347_CMD_I2C_STRETCH_N 0x16
+#define CH9341_CMD_I2C_INIT 0xDB
+#define CH9341_CMD_I2C_STREAM 0xD9
 
-#define GPIO_MODE_IN 0
-#define GPIO_MODE_OUT 1
+#define CH9341_I2C_MAX_LENGTH 0x0400
 
-#define USB20_CMD_GPIO_CMD 0xCC /* GPIO Command */
-#define CH347_GPIO_CNT 8
-
-#define GPIO_ENABLE BIT(7)
-#define GPIO_DIR_SET BIT(6)
+#define CH9341_CMD_I2C_NEW_STM_US 0x01
+#define CH9341_CMD_I2C_NEW_STM_MS 0x02
+#define CH9341_CMD_I2C_NEW_STM_START 0x03
+#define CH9341_CMD_I2C_NEW_STM_STOP 0x04
+#define CH9341_CMD_I2C_NEW_STM_OUT 0x05
+#define CH9341_CMD_I2C_NEW_STM_IN_NACK 0x06
+#define CH9341_CMD_I2C_NEW_STM_IN_ACK 0x07
+#define CH9341_CMD_I2C_NEW_STM_ADDR 0x08
 
 #define DEFAULT_TIMEOUT 1000
 #define CH34X_NW 4
+
+#define MAXCH 3
 
 #ifndef USB_DEVICE_INTERFACE_NUMBER
 #define USB_DEVICE_INTERFACE_NUMBER(vend, prod, num)   \
@@ -177,20 +196,28 @@
 	.bInterfaceNumber = (num)
 #endif
 
+enum _CHANNEL_TYPE {
+	CH_ALL = 0,
+	CH_SPI = 0,
+	CH_I2C = 1,
+	CH_DEF = 2,
+};
+
 typedef enum _CHIP_TYPE {
 	CHIP_CH341 = 0,
 	CHIP_CH347F = 1,
 	CHIP_CH347T = 2,
 	CHIP_CH339W = 3,
+	CHIP_CH9341C,
 } CHIP_TYPE;
 
 struct ch341_pin_config {
-	u8 pin; /* pin number of ch341a/b/f */
+	u8 pin; /* pin number of CH341 */
 	char *name; /* pin name */
 };
 
-struct ch347_pin_config {
-	u8 pin; /* pin number of ch347t */
+struct ch34x_pin_config {
+	u8 pin; /* pin number of CH347 */
 	char *name; /* pin name */
 	u8 gpioindex;
 	u8 mode;
@@ -253,6 +280,30 @@ typedef struct _stream_usbcfg {
 	u8 reserved[4]; /* reserved */
 } stream_hw_cfgs, *pstream_hw_cfgs;
 
+typedef struct {
+	uint8_t mode; /* SPI interface operating mode setting */
+	uint8_t fre_div; /* SPI interface master mode clock divider setting */
+	uint8_t fill_data; /* SPI master default transmit bytes */
+	uint8_t control; /* Other SPI interface configuration byte */
+	uint8_t scs_polar; /* SPI interface chip select pin polarity control */
+	uint16_t data_delay; /* SPI communication delay between each two bytes, unit: mircosecond */
+	uint16_t cs_data_delay; /* SPI communication delay between chip select activate with data start, unit: mircosecond */
+	uint16_t data_cs_delay; /* SPI communication delay between data transmit over with chip select deactivate, unit: mircosecond */
+	uint8_t timeout; /* SPI interface slave mode receive timeout setting, unit: 100uS */
+	uint8_t reserved[4]; /* Bytes reserved */
+} mspi_cfg_ch9341;
+
+typedef struct {
+	uint16_t gpio_cfg[10]; /* GPIO function configuration */
+	uint16_t reserved[6]; /* Bytes reserved */
+	uint8_t filter; /* GPIO delay filter time, in us. This setting applies to all input GPIOs simultaneously. */
+	uint8_t reserved2[3]; /* Bytes reserved */
+} mgpio_cfg_ch9341;
+
+typedef struct __attribute__((packed)) {
+	uint16_t gpio_cfg[10]; /* GPIO pin function configuration */
+} mgpio_cfg_recv_ch9341;
+
 #pragma pack()
 
 struct ch34x_wb {
@@ -271,11 +322,16 @@ struct ch34x_device {
 	struct usb_device *usb_dev; /* usb device */
 	struct usb_interface *intf; /* usb interface */
 
-	struct usb_endpoint_descriptor *bulk_in; /* usb endpoint bulk in */
-	struct usb_endpoint_descriptor *bulk_out; /* usb endpoint bulk out */
+	struct usb_endpoint_descriptor
+		*bulk_in[MAXCH]; /* usb endpoint bulk in */
+	struct usb_endpoint_descriptor
+		*bulk_out[MAXCH]; /* usb endpoint bulk out */
 	struct usb_endpoint_descriptor
 		*intr_in; /* usb endpoint interrupt in */
-	u8 bulk_out_endpointAddr; /*bulk output endpoint*/
+	u8 bulk_out_endpointAddr[MAXCH]; /*bulk output endpoint*/
+
+	u8 bulkin_num;
+	u8 bulkout_num;
 
 	u8 *bulkin_buf; /* usb bulk in buffer */
 	u8 *bulkout_buf; /* usb bulk out buffer */
@@ -285,10 +341,10 @@ struct ch34x_device {
 	struct ch34x_wb wb[CH34X_NW];
 	int write_used; /* number of non-empty write buffers */
 	int transmitting;
+	unsigned int susp_count; /* number of suspended interfaces */
+	bool disconnecting; /* device is being disconnected */
 	spinlock_t write_lock;
 
-	struct usb_anchor
-		submitted; /* in case we need to retract our submissions */
 	int errors;
 	spinlock_t err_lock;
 
@@ -301,9 +357,9 @@ struct ch34x_device {
 #else
 	struct spi_master *master;
 #endif
-	struct spi_device *slaves[CH341_SPI_MAX_NUM_DEVICES];
+	struct spi_device *slaves[CH34X_SPI_MAX_NUM_DEVICES];
 	int slave_num;
-	bool last_cpol; /* last message CPOL */
+	bool last_cpol; /* last message CPOXL */
 	int cur_speed_hz;
 
 	u8 gpio_mask; /* configuratoin mask defines IN/OUT pins */
@@ -314,28 +370,30 @@ struct ch34x_device {
 	stream_hw_cfgs hwcfg;
 	mspi_cfgs spicfg;
 
+	mspi_cfg_ch9341 spicfg_ch9341;
+
 	int id;
 	struct platform_device *spi_pdev;
 
 	struct gpio_chip gpio;
 	u8 gpio_num;
 
-	struct ch347_pin_config *gpio_pins[CH347_MAX_GPIOS];
-	char *gpio_names[CH347_MAX_GPIOS]; /* pin names (gpio_num elements) */
+	struct ch34x_pin_config *gpio_pins[CH34X_MAX_GPIOS];
+	char *gpio_names[CH34X_MAX_GPIOS]; /* pin names (gpio_num elements) */
 	int gpio_irq_map
-		[CH347_MAX_GPIOS]; /* GPIO to IRQ map (gpio_num elements) */
+		[CH34X_MAX_GPIOS]; /* GPIO to IRQ map (gpio_num elements) */
 
 	/* IRQ device description */
 	struct irq_chip irq; /* chip descriptor for IRQs */
 	u8 irq_num; /* number of pins with IRQs */
 	int irq_base; /* base IRQ allocated */
-	int irq_types[CH347_MAX_GPIOS]; /* IRQ types (irq_num elements) */
+	int irq_types[CH34X_MAX_GPIOS]; /* IRQ types (irq_num elements) */
 	bool irq_enabled
-		[CH347_MAX_GPIOS]; /* IRQ enabled flag (irq_num elements) */
+		[CH34X_MAX_GPIOS]; /* IRQ enabled flag (irq_num elements) */
 	int irq_gpio_map
-		[CH347_MAX_GPIOS]; /* IRQ to GPIO pin map (irq_num elements) */
+		[CH34X_MAX_GPIOS]; /* IRQ to GPIO pin map (irq_num elements) */
 	u8 irq_index;
-	spinlock_t irq_lock;
+	raw_spinlock_t irq_lock;
 
 	struct delayed_work work;
 

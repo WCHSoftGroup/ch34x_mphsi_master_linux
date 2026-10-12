@@ -1,5 +1,5 @@
 /*
- * CH347/CH341 MPHSI GPIO and IRQ driver layer
+ * MPHSI GPIO and IRQ driver layer
  *
  * Copyright (C) 2026 Nanjing Qinheng Microelectronics Co., Ltd.
  * Web: http://wch.cn
@@ -25,13 +25,13 @@ MODULE_PARM_DESC(
 
 static int ch347gpio_control(struct ch34x_device *ch34x_dev, u8 *cfg_data,
 			     u8 *status_data);
-extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len,
-			      int in_len);
+extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, u8 ch,
+			      int out_len, int in_len);
 static void irq_set_work(struct work_struct *work);
 
-extern int ch347_irq_check(struct ch34x_device *ch34x_dev, u8 irq);
-extern int ch347_irq_probe(struct ch34x_device *ch34x_dev);
-extern void ch347_irq_remove(struct ch34x_device *ch34x_dev);
+extern int ch34x_irq_check(struct ch34x_device *ch34x_dev, u8 irq);
+extern int ch34x_irq_probe(struct ch34x_device *ch34x_dev);
+extern void ch34x_irq_remove(struct ch34x_device *ch34x_dev);
 extern int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev);
 extern void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev);
 
@@ -82,10 +82,11 @@ static bool ch347_irq_control(struct ch34x_device *ch34x_dev, u8 gpioindex,
 	return true;
 }
 
-static void ch347_irq_enable_control(struct irq_data *data, bool enable)
+static void ch34x_irq_enable_control(struct irq_data *data, bool enable)
 {
 	struct ch34x_device *ch34x_dev;
 	int irq;
+	unsigned long flags;
 	CHECK_PARAM(data &&
 		    (ch34x_dev = irq_data_get_irq_chip_data(data)));
 
@@ -96,26 +97,28 @@ static void ch347_irq_enable_control(struct irq_data *data, bool enable)
 
 	ch34x_dev->irq_index = irq;
 
-	schedule_delayed_work(&ch34x_dev->work, msecs_to_jiffies(5));
-
 	/* Enable local IRQ */
+	raw_spin_lock_irqsave(&ch34x_dev->irq_lock, flags);
 	ch34x_dev->irq_enabled[irq] = enable;
+	raw_spin_unlock_irqrestore(&ch34x_dev->irq_lock, flags);
+
+	schedule_delayed_work(&ch34x_dev->work, msecs_to_jiffies(5));
 
 	DEV_DBG(CH34X_USBDEV, "IRQ=%d enabled=%d", data->irq,
 		ch34x_dev->irq_enabled[irq] ? 1 : 0);
 }
 
-static void ch347_irq_enable(struct irq_data *data)
+static void ch34x_irq_enable(struct irq_data *data)
 {
-	ch347_irq_enable_control(data, true);
+	ch34x_irq_enable_control(data, true);
 }
 
-static void ch347_irq_disable(struct irq_data *data)
+static void ch34x_irq_disable(struct irq_data *data)
 {
-	ch347_irq_enable_control(data, false);
+	ch34x_irq_enable_control(data, false);
 }
 
-static int ch347_irq_set_type(struct irq_data *data, unsigned int type)
+static int ch34x_irq_set_type(struct irq_data *data, unsigned int type)
 {
 	struct ch34x_device *ch34x_dev;
 	int irq;
@@ -132,51 +135,63 @@ static int ch347_irq_set_type(struct irq_data *data, unsigned int type)
 
 	gpioindex = ch34x_dev->gpio_pins[irq]->gpioindex;
 
-	schedule_delayed_work(&ch34x_dev->work, msecs_to_jiffies(5));
-
 	ch34x_dev->irq_types[irq] = type;
+
+	schedule_delayed_work(&ch34x_dev->work, msecs_to_jiffies(5));
 
 	DEV_DBG(CH34X_USBDEV, "IRQ=%d flow_type=%d", data->irq, type);
 
 	return 0;
 }
 
-int ch347_irq_check(struct ch34x_device *ch34x_dev, u8 irq)
+static int ch34x_handle_simple_irq_compat(unsigned int virq)
 {
-	int type;
+	struct irq_data *data;
+	struct irq_desc *desc;
 	unsigned long flags;
 
-	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
-	CHECK_PARAM_RET(irq < ch34x_dev->irq_num, -EINVAL);
-
-	if (irq < 0 || irq >= ch34x_dev->irq_num)
+	data = irq_get_irq_data(virq);
+	if (!data)
 		return -EINVAL;
 
-	/* If IRQ is disabled, just return with success */
-	if (!ch34x_dev->irq_enabled[irq])
-		return 0;
+	desc = irq_data_to_desc(data);
+	if (!desc)
+		return -EINVAL;
 
-	type = ch34x_dev->irq_types[irq];
-
-	DEV_DBG(CH34X_USBDEV, "Hardware IRQ=%d %d", irq, type);
-
-	spin_lock_irqsave(&ch34x_dev->irq_lock, flags);
+	local_irq_save(flags);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
-	handle_simple_irq(irq_data_to_desc(
-		irq_get_irq_data(ch34x_dev->irq_base + irq)));
+	handle_simple_irq(desc);
 #else
-	handle_simple_irq(ch34x_dev->irq_base + irq,
-			  irq_data_to_desc(irq_get_irq_data(
-				  ch34x_dev->irq_base + irq)));
+	handle_simple_irq(virq, desc);
 #endif
 
-	spin_unlock_irqrestore(&ch34x_dev->irq_lock, flags);
-
+	local_irq_restore(flags);
 	return 0;
 }
 
-int ch347_irq_probe(struct ch34x_device *ch34x_dev)
+int ch34x_irq_check(struct ch34x_device *ch34x_dev, u8 irq)
+{
+	unsigned long flags;
+	bool enabled;
+
+	if (!ch34x_dev || irq >= ch34x_dev->irq_num)
+		return -EINVAL;
+
+	raw_spin_lock_irqsave(&ch34x_dev->irq_lock, flags);
+	enabled = ch34x_dev->irq_enabled[irq];
+	raw_spin_unlock_irqrestore(&ch34x_dev->irq_lock, flags);
+
+	if (!enabled)
+		return 0;
+
+	DEV_DBG(CH34X_USBDEV, "Hardware IRQ=%u %u", irq,
+		ch34x_dev->irq_types[irq]);
+
+	return ch34x_handle_simple_irq_compat(ch34x_dev->irq_base + irq);
+}
+
+int ch34x_irq_probe(struct ch34x_device *ch34x_dev)
 {
 	int i;
 	int result;
@@ -186,10 +201,10 @@ int ch347_irq_probe(struct ch34x_device *ch34x_dev)
 	DEV_DBG(CH34X_USBDEV, "Start");
 
 	ch34x_dev->irq.name = "ch34x";
-	ch34x_dev->irq.irq_unmask = ch347_irq_enable;
-	ch34x_dev->irq.irq_mask = ch347_irq_disable;
-	ch34x_dev->irq.irq_disable = ch347_irq_disable;
-	ch34x_dev->irq.irq_set_type = ch347_irq_set_type;
+	ch34x_dev->irq.irq_unmask = ch34x_irq_enable;
+	ch34x_dev->irq.irq_mask = ch34x_irq_disable;
+	ch34x_dev->irq.irq_disable = ch34x_irq_disable;
+	ch34x_dev->irq.irq_set_type = ch34x_irq_set_type;
 
 	if (!ch34x_dev->irq_num)
 		return 0;
@@ -213,7 +228,7 @@ int ch347_irq_probe(struct ch34x_device *ch34x_dev)
 				       IRQ_NOREQUEST | IRQ_NOPROBE);
 	}
 
-	spin_lock_init(&ch34x_dev->irq_lock);
+	raw_spin_lock_init(&ch34x_dev->irq_lock);
 
 	INIT_DELAYED_WORK(&ch34x_dev->work, irq_set_work);
 
@@ -222,14 +237,14 @@ int ch347_irq_probe(struct ch34x_device *ch34x_dev)
 	return 0;
 }
 
-void ch347_irq_remove(struct ch34x_device *ch34x_dev)
+void ch34x_irq_remove(struct ch34x_device *ch34x_dev)
 {
 	CHECK_PARAM(ch34x_dev);
 
+	cancel_delayed_work_sync(&ch34x_dev->work);
+
 	if (ch34x_dev->irq_base)
 		irq_free_descs(ch34x_dev->irq_base, ch34x_dev->irq_num);
-
-	cancel_delayed_work(&ch34x_dev->work);
 
 	return;
 }
@@ -250,12 +265,12 @@ static int ch347gpio_control(struct ch34x_device *ch34x_dev, u8 *cfg_data,
 	memcpy(&io[i], cfg_data, CH347_GPIO_CNT);
 	len = i + CH347_GPIO_CNT;
 
-	if (ch34x_usb_transfer(ch34x_dev, len, 0) != len) {
+	if (ch34x_usb_transfer(ch34x_dev, CH_ALL, len, 0) != len) {
 		ret = -EPROTO;
 		goto exit;
 	}
 
-	if (ch34x_usb_transfer(ch34x_dev, 0, len) != len) {
+	if (ch34x_usb_transfer(ch34x_dev, CH_ALL, 0, len) != len) {
 		ret = -EPROTO;
 		goto exit;
 	}
@@ -321,6 +336,215 @@ static int ch347gpio_set(struct ch34x_device *ch34x_dev, u8 ienable,
 	return 0;
 }
 
+/* CH9341 related APIs */
+static int ch9341gpio_init(struct ch34x_device *ch34x_dev, u8 *cfg_data,
+			   u8 *status_data)
+{
+	u8 *io = ch34x_dev->bulkout_buf;
+	int i, len, olen;
+	mgpio_cfg_ch9341 gpiocfg;
+	mgpio_cfg_recv_ch9341 cfg_recv;
+	int ret = 0;
+
+	mutex_lock(&ch34x_dev->io_mutex);
+	i = 0;
+	len = sizeof(mgpio_cfg_ch9341);
+	io[i++] = CH9341_CMD_GPIO_FUN_SET;
+	io[i++] = (u8)~CH9341_CMD_GPIO_FUN_SET;
+	io[i++] = len;
+	io[i++] = 0x00;
+	memcpy(&io[i], cfg_data, len);
+	len += CH9341_CMD_HEADER;
+
+	if (ch34x_usb_transfer(ch34x_dev, CH_DEF, len, 0) != len) {
+		ret = -EPROTO;
+		goto exit;
+	}
+
+	olen = CH9341_CMD_HEADER + sizeof(mgpio_cfg_recv_ch9341);
+
+	if (ch34x_usb_transfer(ch34x_dev, CH_DEF, 0, olen) != olen) {
+		ret = -EPROTO;
+		goto exit;
+	}
+
+	memcpy(&gpiocfg, cfg_data, sizeof(mgpio_cfg_ch9341));
+	memcpy(&cfg_recv, ch34x_dev->bulkin_buf + CH9341_CMD_HEADER,
+	       sizeof(mgpio_cfg_recv_ch9341));
+
+	for (i = 0; i < CH9341C_MPHSI_GPIOS; i++) {
+		if ((__le16_to_cpu(gpiocfg.gpio_cfg[i]) & BIT(15)) == 0)
+			continue;
+		if (gpiocfg.gpio_cfg[i] != cfg_recv.gpio_cfg[i]) {
+			ret = -EIO;
+			goto exit;
+		}
+	}
+
+	if (status_data)
+		memcpy(status_data,
+		       ch34x_dev->bulkin_buf + CH9341_CMD_HEADER,
+		       olen - CH9341_CMD_HEADER);
+
+exit:
+	mutex_unlock(&ch34x_dev->io_mutex);
+	return ret;
+}
+
+static int ch9341gpio_control(struct ch34x_device *ch34x_dev, u8 *cfg_data,
+			      u8 *status_data)
+{
+	u8 *io = ch34x_dev->bulkout_buf;
+	int i, len;
+	int ret = 0;
+
+	mutex_lock(&ch34x_dev->io_mutex);
+
+	i = 0;
+	io[i++] = USB20_CMD_GPIO_CMD;
+	io[i++] = (u8)~USB20_CMD_GPIO_CMD;
+	io[i++] = 0x08;
+	io[i++] = 0;
+	memcpy(&io[i], cfg_data, 0x08);
+	len = i + 8;
+
+	if (ch34x_usb_transfer(ch34x_dev, CH_DEF, len, 0) != len) {
+		ret = -EPROTO;
+		goto exit;
+	}
+
+	if (ch34x_usb_transfer(ch34x_dev, CH_DEF, 0, len) != len) {
+		ret = -EPROTO;
+		goto exit;
+	}
+
+	if (status_data)
+		memcpy(status_data,
+		       ch34x_dev->bulkin_buf + CH9341_CMD_HEADER,
+		       len - CH9341_CMD_HEADER);
+
+exit:
+	mutex_unlock(&ch34x_dev->io_mutex);
+	return ret;
+}
+
+static bool ch9341_irq_control(struct ch34x_device *ch34x_dev,
+			       u8 gpioindex, bool enable,
+			       unsigned int type)
+{
+	mgpio_cfg_ch9341 gpiocfg = { 0 };
+	u8 mode, val;
+
+	switch (type) {
+	case IRQ_TYPE_EDGE_FALLING:
+		mode = 0;
+		val = 0x02;
+		break;
+	case IRQ_TYPE_EDGE_RISING:
+		mode = 1;
+		val = 0x01;
+		break;
+	case IRQ_TYPE_LEVEL_HIGH:
+		mode = 3;
+		val = 0x01;
+		break;
+	case IRQ_TYPE_LEVEL_LOW:
+		val = 0x02;
+		mode = 2;
+		break;
+	default:
+		return false;
+	}
+
+	gpiocfg.gpio_cfg[gpioindex] |= BIT(15);
+	gpiocfg.gpio_cfg[gpioindex] |= val << 11;
+	if (enable)
+		gpiocfg.gpio_cfg[gpioindex] |= BIT(6);
+	else
+		gpiocfg.gpio_cfg[gpioindex] &= ~BIT(6);
+	gpiocfg.gpio_cfg[gpioindex] |= mode << 4;
+	gpiocfg.gpio_cfg[gpioindex] |= BIT(3);
+	gpiocfg.gpio_cfg[gpioindex] |= 0x01;
+
+	gpiocfg.gpio_cfg[gpioindex] =
+		__cpu_to_le16(gpiocfg.gpio_cfg[gpioindex]);
+
+	if (ch9341gpio_init(ch34x_dev, (u8 *)&gpiocfg, NULL))
+		return false;
+
+	return true;
+}
+
+static int ch9341gpio_get(struct ch34x_device *ch34x_dev, u16 *idata)
+{
+	int j;
+	u8 cfg_data[8] = { 0 };
+	u8 status_data[8] = { 0 };
+	u16 level;
+
+	if (ch9341gpio_control(ch34x_dev, cfg_data, status_data))
+		return -EPROTO;
+
+	level = status_data[2] | (status_data[3] << 8);
+	*idata = 0;
+	for (j = 0; j < CH9341_GPIO_CNT; j++) {
+		/* Get value bit */
+		if (level & BIT(j))
+			*idata |= BIT(j);
+	}
+	return 0;
+}
+
+static int ch9341gpio_set(struct ch34x_device *ch34x_dev, u8 gpioindex,
+			  int value)
+{
+	u8 cfg_data[CH9341_GPIO_CNT] = { 0 };
+	u16 enable = 0, level = 0;
+
+	enable |= BIT(gpioindex);
+	if (value)
+		level |= BIT(gpioindex);
+
+	cfg_data[0] = enable;
+	cfg_data[1] = enable >> 8;
+
+	cfg_data[2] = level;
+	cfg_data[3] = level >> 8;
+
+	if (ch9341gpio_control(ch34x_dev, cfg_data, NULL))
+		return -EPROTO;
+
+	return 0;
+}
+
+static int ch9341gpio_setdirection(struct ch34x_device *ch34x_dev,
+				   u8 gpioindex, bool input, int value)
+{
+	mgpio_cfg_ch9341 gpiocfg = { 0 };
+
+	gpiocfg.gpio_cfg[gpioindex] |= BIT(15);
+	if (input) {
+		gpiocfg.gpio_cfg[gpioindex] &= ~BIT(13);
+		gpiocfg.gpio_cfg[gpioindex] |= BIT(12);
+	} else {
+		gpiocfg.gpio_cfg[gpioindex] |= BIT(13);
+		if (value)
+			gpiocfg.gpio_cfg[gpioindex] |= BIT(12);
+		else
+			gpiocfg.gpio_cfg[gpioindex] &= ~BIT(12);
+	}
+	gpiocfg.gpio_cfg[gpioindex] |= BIT(3);
+	gpiocfg.gpio_cfg[gpioindex] |= 0x01;
+
+	gpiocfg.gpio_cfg[gpioindex] =
+		__cpu_to_le16(gpiocfg.gpio_cfg[gpioindex]);
+
+	if (ch9341gpio_init(ch34x_dev, (u8 *)&gpiocfg, NULL))
+		return -EPROTO;
+
+	return 0;
+}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
 static int ch34x_mphsi_gpio_get_direction(struct gpio_chip *chip,
 					  unsigned offset)
@@ -377,7 +601,12 @@ static int ch34x_mphsi_gpio_set_direction(struct gpio_chip *chip,
 			idataout = 1 << gpioindex;
 	}
 
-	return ch347gpio_set(ch34x_dev, ienable, idirout, idataout);
+	if (ch34x_dev->chiptype == CHIP_CH9341C)
+		return ch9341gpio_setdirection(ch34x_dev, gpioindex, input,
+					       value);
+	else
+		return ch347gpio_set(ch34x_dev, ienable, idirout,
+				     idataout);
 }
 
 static int ch34x_mphsi_gpio_direction_input(struct gpio_chip *chip,
@@ -404,14 +633,19 @@ static int ch34x_mphsi_gpio_get(struct gpio_chip *chip, unsigned offset)
 #endif
 	int value;
 	u8 cfg_data[CH347_GPIO_CNT] = { 0 };
-	u8 idir, idata;
+	u8 idir;
+	u16 idata;
 	u8 gpioindex = ch34x_dev->gpio_pins[offset]->gpioindex;
 	int retval;
 
 	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
 	CHECK_PARAM_RET(offset < ch34x_dev->gpio_num, -EINVAL);
 
-	retval = ch347gpio_get(ch34x_dev, cfg_data, &idir, &idata);
+	if (ch34x_dev->chiptype == CHIP_CH9341C)
+		retval = ch9341gpio_get(ch34x_dev, &idata);
+	else
+		retval = ch347gpio_get(ch34x_dev, cfg_data, &idir,
+				       (u8 *)&idata);
 	if (retval)
 		return retval;
 
@@ -459,7 +693,11 @@ static void ch34x_mphsi_gpio_set(struct gpio_chip *chip, unsigned offset,
 	if (value)
 		idataout = 1 << gpioindex;
 
-	retval = ch347gpio_set(ch34x_dev, ienable, idirout, idataout);
+	if (ch34x_dev->chiptype == CHIP_CH9341C)
+		retval = ch9341gpio_set(ch34x_dev, gpioindex, value);
+	else
+		retval = ch347gpio_set(ch34x_dev, ienable, idirout,
+				       idataout);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
 	return retval;
@@ -496,9 +734,14 @@ static void irq_set_work(struct work_struct *work)
 	int irq = ch34x_dev->irq_index;
 	int gpioindex = ch34x_dev->gpio_pins[irq]->gpioindex;
 
-	ch347_irq_control(ch34x_dev, gpioindex,
-			  ch34x_dev->irq_enabled[irq],
-			  ch34x_dev->irq_types[irq]);
+	if (ch34x_dev->chiptype == CHIP_CH9341C)
+		ch9341_irq_control(ch34x_dev, gpioindex,
+				   ch34x_dev->irq_enabled[irq],
+				   ch34x_dev->irq_types[irq]);
+	else
+		ch347_irq_control(ch34x_dev, gpioindex,
+				  ch34x_dev->irq_enabled[irq],
+				  ch34x_dev->irq_types[irq]);
 }
 
 int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev)
@@ -586,7 +829,7 @@ void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev)
 
 	CHECK_PARAM(ch34x_dev);
 
-	if (ch34x_dev->gpio.base > 0) {
+	if (ch34x_dev->gpio.base >= 0) {
 #ifdef SYSFS_GPIO
 		for (i = 0; i < ch34x_dev->gpio_num; i++) {
 			gpiod_unexport(gpio_to_desc(gpio->base + i));

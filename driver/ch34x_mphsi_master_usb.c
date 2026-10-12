@@ -1,5 +1,5 @@
 /*
- * USB to SPI/I2C/GPIO controller driver for USB converter chip CH347/CH341, etc.
+ * USB to SPI/I2C/GPIO controller driver for USB converter chip CH347/CH341/CH339/CH9341, etc.
  *
  * Copyright (C) 2026 Nanjing Qinheng Microelectronics Co., Ltd.
  * Web: http://wch.cn
@@ -21,6 +21,7 @@
  * V1.5 - enable I2C function for CH347F automatically
  *      - fix ch34x_i2c_check_dev function of CH341
  * V1.6 - add support for kernel version beyond 6.8.x
+ * V1.7 - add support for CH9341
  */
 
 #include "ch34x_mphsi.h"
@@ -34,6 +35,7 @@ static const struct usb_device_id ch34x_usb_ids[] = {
 	{ USB_DEVICE_INTERFACE_NUMBER(
 		0x1a86, 0x55db, 0x02) }, /* CH347T Mode1 SPI+IIC+UART */
 	{ USB_DEVICE_INTERFACE_NUMBER(0x1a86, 0x55e7, 0x02) }, /* CH339W */
+	{ USB_DEVICE(0x1a86, 0x55ee) }, /* CH9341C */
 	{} /* Terminating entry */
 };
 
@@ -45,13 +47,13 @@ struct ch341_pin_config ch341_board_config[CH341_CS_NUM] = {
 	{ 17, "cs2" },
 };
 
-struct ch347_pin_config ch347t_board_config[CH347T_MPHSI_GPIOS] = {
+struct ch34x_pin_config ch347t_board_config[CH347T_MPHSI_GPIOS] = {
 	{ 15, NULL, 4, GPIO_MODE_OUT, true },
 	{ 2, NULL, 6, GPIO_MODE_IN, true },
 	{ 13, NULL, 7, GPIO_MODE_OUT, true },
 };
 
-struct ch347_pin_config ch347f_board_config[CH347F_MPHSI_GPIOS] = {
+struct ch34x_pin_config ch347f_board_config[CH347F_MPHSI_GPIOS] = {
 	{ 17, NULL, 0, GPIO_MODE_IN, true },
 	{ 18, NULL, 1, GPIO_MODE_OUT, true },
 	{ 10, NULL, 2, GPIO_MODE_OUT, true },
@@ -62,25 +64,36 @@ struct ch347_pin_config ch347f_board_config[CH347F_MPHSI_GPIOS] = {
 	{ 26, NULL, 7, GPIO_MODE_OUT, true },
 };
 
-struct ch347_pin_config ch339w_board_config[CH339W_MPHSI_GPIOS] = {
+struct ch34x_pin_config ch9341c_board_config[CH9341C_MPHSI_GPIOS] = {
+	{ 17, NULL, 0, GPIO_MODE_IN, true },
+	{ 18, NULL, 1, GPIO_MODE_IN, true },
+	{ 10, NULL, 2, GPIO_MODE_IN, true },
+	{ 9, NULL, 3, GPIO_MODE_IN, false },
+	{ 23, NULL, 4, GPIO_MODE_IN, false },
+	{ 24, NULL, 5, GPIO_MODE_IN, false },
+	{ 25, NULL, 6, GPIO_MODE_IN, false },
+	{ 26, NULL, 7, GPIO_MODE_IN, true },
+	{ 26, NULL, 8, GPIO_MODE_IN, true },
+	{ 26, NULL, 9, GPIO_MODE_IN, true },
+};
+
+struct ch34x_pin_config ch339w_board_config[CH339W_MPHSI_GPIOS] = {
 	{ 59, NULL, 1, GPIO_MODE_OUT, false },
 	{ 37, NULL, 2, GPIO_MODE_OUT, false },
 	{ 36, NULL, 3, GPIO_MODE_OUT, false },
 };
 
-extern int ch34x_mphsi_spi_probe(struct ch34x_device *ch34x_dev);
-extern int ch34x_mphsi_spi_remove(struct ch34x_device *ch34x_dev);
 extern int ch34x_spi_probe(struct ch34x_device *ch34x_dev);
 extern void ch34x_spi_remove(struct ch34x_device *ch34x_dev);
 extern int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev);
 extern void ch34x_mphsi_i2c_remove(struct ch34x_device *ch34x_dev);
-extern int ch347_irq_probe(struct ch34x_device *ch34x_dev);
-extern void ch347_irq_remove(struct ch34x_device *ch34x_dev);
+extern int ch34x_irq_probe(struct ch34x_device *ch34x_dev);
+extern void ch34x_irq_remove(struct ch34x_device *ch34x_dev);
 extern int ch34x_mphsi_gpio_probe(struct ch34x_device *ch34x_dev);
 extern void ch34x_mphsi_gpio_remove(struct ch34x_device *ch34x_dev);
-extern int ch347_irq_check(struct ch34x_device *ch34x_dev, u8 irq);
-extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len,
-			      int in_len);
+extern int ch34x_irq_check(struct ch34x_device *ch34x_dev, u8 irq);
+extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, u8 ch,
+			      int out_len, int in_len);
 extern bool ch347_get_chipinfo(struct ch34x_device *ch34x_dev);
 extern bool ch347_func_switch(struct ch34x_device *ch34x_dev, int index);
 extern void ch34x_mphsi_i2c_remove(struct ch34x_device *ch34x_dev);
@@ -88,7 +101,7 @@ extern int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev);
 
 static int ch34x_cfg_probe(struct ch34x_device *ch34x_dev)
 {
-	struct ch347_pin_config *ch347cfg;
+	struct ch34x_pin_config *ch34xcfg;
 	int i;
 
 	CHECK_PARAM_RET(ch34x_dev, -EINVAL);
@@ -99,7 +112,8 @@ static int ch34x_cfg_probe(struct ch34x_device *ch34x_dev)
 		ch34x_dev->slave_num = CH341_CS_NUM;
 	} else if (ch34x_dev->chiptype == CHIP_CH347F ||
 		   ch34x_dev->chiptype == CHIP_CH347T) {
-		if ((ch34x_dev->firmver >= 0x0341) ||
+		if ((ch34x_dev->chiptype == CHIP_CH347T &&
+		     ch34x_dev->firmver >= 0x0341) ||
 		    (ch34x_dev->chiptype == CHIP_CH347F)) {
 			ch34x_dev->irq_num = 0;
 			ch34x_dev->irq_base = 0;
@@ -108,11 +122,11 @@ static int ch34x_cfg_probe(struct ch34x_device *ch34x_dev)
 
 		if (ch34x_dev->chiptype == CHIP_CH347T) {
 			for (i = 0; i < CH347T_MPHSI_GPIOS; i++) {
-				ch347cfg = ch347t_board_config + i;
+				ch34xcfg = ch347t_board_config + i;
 				ch34x_dev->gpio_names[ch34x_dev->gpio_num] =
-					ch347cfg->name;
+					ch34xcfg->name;
 				ch34x_dev->gpio_pins[ch34x_dev->gpio_num] =
-					ch347cfg;
+					ch34xcfg;
 				if (ch34x_dev->firmver >= 0x0341) {
 					ch34x_dev->gpio_irq_map
 						[ch34x_dev->gpio_num] =
@@ -122,45 +136,45 @@ static int ch34x_cfg_probe(struct ch34x_device *ch34x_dev)
 						ch34x_dev->gpio_num;
 					DEV_DBG(CH34X_USBDEV,
 						"%s gpio%d irq=%d %s",
-						ch347cfg->mode ==
+						ch34xcfg->mode ==
 								GPIO_MODE_IN ?
 							"input " :
 							"output",
-						ch347cfg->gpioindex,
+						ch34xcfg->gpioindex,
 						ch34x_dev->irq_num,
-						ch347cfg->hwirq ?
+						ch34xcfg->hwirq ?
 							"(hwirq)" :
 							"");
 					ch34x_dev->irq_num++;
 				} else
 					DEV_DBG(CH34X_USBDEV, "%s gpio%d",
-						ch347cfg->mode ==
+						ch34xcfg->mode ==
 								GPIO_MODE_IN ?
 							"input " :
 							"output",
-						ch347cfg->gpioindex);
+						ch34xcfg->gpioindex);
 
 				ch34x_dev->gpio_num++;
 			}
 		} else {
 			for (i = 0; i < CH347F_MPHSI_GPIOS; i++) {
-				ch347cfg = ch347f_board_config + i;
+				ch34xcfg = ch347f_board_config + i;
 				ch34x_dev->gpio_names[ch34x_dev->gpio_num] =
-					ch347cfg->name;
+					ch34xcfg->name;
 				ch34x_dev->gpio_pins[ch34x_dev->gpio_num] =
-					ch347cfg;
+					ch34xcfg;
 				ch34x_dev
 					->gpio_irq_map[ch34x_dev->gpio_num] =
 					ch34x_dev->irq_num;
 				ch34x_dev->irq_gpio_map[ch34x_dev->irq_num] =
 					ch34x_dev->gpio_num;
 				DEV_DBG(CH34X_USBDEV, "%s %d irq=%d %s",
-					ch347cfg->mode == GPIO_MODE_IN ?
+					ch34xcfg->mode == GPIO_MODE_IN ?
 						"input " :
 						"output",
-					ch347cfg->gpioindex,
+					ch34xcfg->gpioindex,
 					ch34x_dev->irq_num,
-					ch347cfg->hwirq ? "(hwirq)" : "");
+					ch34xcfg->hwirq ? "(hwirq)" : "");
 				ch34x_dev->irq_num++;
 				ch34x_dev->gpio_num++;
 			}
@@ -169,18 +183,41 @@ static int ch34x_cfg_probe(struct ch34x_device *ch34x_dev)
 		ch34x_dev->slave_num = CH339_CS_NUM;
 		if (ch34x_dev->chiptype == CHIP_CH339W) {
 			for (i = 0; i < CH339W_MPHSI_GPIOS; i++) {
-				ch347cfg = ch339w_board_config + i;
+				ch34xcfg = ch339w_board_config + i;
 				ch34x_dev->gpio_names[ch34x_dev->gpio_num] =
-					ch347cfg->name;
+					ch34xcfg->name;
 				ch34x_dev->gpio_pins[ch34x_dev->gpio_num] =
-					ch347cfg;
+					ch34xcfg;
 				DEV_DBG(CH34X_USBDEV, "%s gpio%d",
-					ch347cfg->mode == GPIO_MODE_IN ?
+					ch34xcfg->mode == GPIO_MODE_IN ?
 						"input " :
 						"output",
-					ch347cfg->gpioindex);
+					ch34xcfg->gpioindex);
 				ch34x_dev->gpio_num++;
 			}
+		}
+	} else if (ch34x_dev->chiptype == CHIP_CH9341C) {
+		ch34x_dev->irq_num = 0;
+		ch34x_dev->irq_base = 0;
+		ch34x_dev->slave_num = CH9341_CS_NUM;
+
+		for (i = 0; i < CH9341C_MPHSI_GPIOS; i++) {
+			ch34xcfg = ch9341c_board_config + i;
+			ch34x_dev->gpio_names[ch34x_dev->gpio_num] =
+				ch34xcfg->name;
+			ch34x_dev->gpio_pins[ch34x_dev->gpio_num] =
+				ch34xcfg;
+			ch34x_dev->gpio_irq_map[ch34x_dev->gpio_num] =
+				ch34x_dev->irq_num;
+			ch34x_dev->irq_gpio_map[ch34x_dev->irq_num] =
+				ch34x_dev->gpio_num;
+			DEV_DBG(CH34X_USBDEV, "%s %d irq=%d %s",
+				ch34xcfg->mode == GPIO_MODE_IN ? "input " :
+								 "output",
+				ch34xcfg->gpioindex, ch34x_dev->irq_num,
+				ch34xcfg->hwirq ? "(hwirq)" : "");
+			ch34x_dev->irq_num++;
+			ch34x_dev->gpio_num++;
 		}
 	}
 
@@ -281,7 +318,7 @@ static void ch34x_write_bulk_callback(struct urb *urb)
 	spin_unlock_irqrestore(&ch34x_dev->write_lock, flags);
 }
 
-int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len,
+int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, u8 ch, int out_len,
 		       int in_len)
 {
 	int retval;
@@ -307,26 +344,35 @@ retry:
 				ch34x_wb_is_avail(ch34x_dev),
 				msecs_to_jiffies(DEFAULT_TIMEOUT));
 			if (timeout <= 0) {
-		        wb->use = 0;
 				return -ETIMEDOUT;
 			} else
 				goto retry;
 		}
 		wb = &ch34x_dev->wb[wbn];
-		spin_unlock_irqrestore(&ch34x_dev->write_lock, flags);
-
 		memcpy(wb->buf, ch34x_dev->bulkout_buf, out_len);
 		wb->len = out_len;
 
-		usb_anchor_urb(wb->urb, &ch34x_dev->submitted);
-		wb->urb->pipe =
-			usb_sndbulkpipe(ch34x_dev->usb_dev,
-					ch34x_dev->bulk_out_endpointAddr);
+		if (ch34x_dev->susp_count) {
+			spin_unlock_irqrestore(&ch34x_dev->write_lock,
+					       flags);
+			wb->use = 0;
+			return -EIO;
+		}
+
+		wb->urb->pipe = usb_sndbulkpipe(
+			ch34x_dev->usb_dev,
+			ch34x_dev->bulk_out_endpointAddr[ch]);
 		retval = ch34x_start_wb(ch34x_dev, wb);
+		spin_unlock_irqrestore(&ch34x_dev->write_lock, flags);
 		if (retval)
-			goto error_unanchor;
+			goto exit;
+
 		if (ch34x_dev->bulkout_buf[0] == CH341_CMD_I2C_STREAM &&
 		    ch34x_dev->bulkout_buf[1] == CH341_CMD_I2C_STM_STA)
+			i2cmode = true;
+		if (ch34x_dev->bulkout_buf[0] == CH9341_CMD_I2C_STREAM &&
+		    ch34x_dev->bulkout_buf[1] ==
+			    (u8)~CH9341_CMD_I2C_STREAM)
 			i2cmode = true;
 	}
 
@@ -337,14 +383,14 @@ retry:
 
 	size = in_len;
 
-	memset(ch34x_dev->bulkin_buf, 0, MAX_BUFFER_LENGTH * 2);
+	memset(ch34x_dev->bulkin_buf, 0, MAX_BUFFER_LENGTH);
 
 	while (actual < size) {
 		retval = usb_bulk_msg(
 			ch34x_dev->usb_dev,
 			usb_rcvbulkpipe(
 				ch34x_dev->usb_dev,
-				usb_endpoint_num(ch34x_dev->bulk_in)),
+				usb_endpoint_num(ch34x_dev->bulk_in[ch])),
 			ch34x_dev->bulkin_buf + actual, size - actual,
 			&rlen, 2000);
 		if (retval) {
@@ -354,17 +400,17 @@ retry:
 			break;
 		}
 		actual += rlen;
-		if (i2cmode && actual == 1 && ch34x_dev->bulkin_buf[0] == 0x00)
+
+		if (i2cmode && actual == 1 &&
+		    ch34x_dev->bulkin_buf[0] == 0x00)
+			break;
+		if (i2cmode && actual == 5 &&
+		    ch34x_dev->bulkin_buf[0] == CH9341_CMD_I2C_STREAM)
 			break;
 	}
 
-
 exit:
 	return retval < 0 ? retval : actual;
-error_unanchor:
-    wb->use = 0;
-	usb_unanchor_urb(wb->urb);
-	return retval;
 }
 
 bool ch347_get_chipinfo(struct ch34x_device *ch34x_dev)
@@ -381,12 +427,12 @@ bool ch347_get_chipinfo(struct ch34x_device *ch34x_dev)
 	io[i++] = 0;
 	len = i;
 
-	if (ch34x_usb_transfer(ch34x_dev, len, 0) != len)
+	if (ch34x_usb_transfer(ch34x_dev, CH_ALL, len, 0) != len)
 		goto exit;
 
 	len = 4 + USB20_CMD_HEADER;
 
-	if (ch34x_usb_transfer(ch34x_dev, 0, len) != len)
+	if (ch34x_usb_transfer(ch34x_dev, CH_ALL, 0, len) != len)
 		goto exit;
 
 	if (ch34x_dev->bulkin_buf[0] != USB20_CMD_INFO_RD)
@@ -438,12 +484,12 @@ bool ch347_func_switch(struct ch34x_device *ch34x_dev, int index)
 	}
 	len = USB20_CMD_HEADER + 8;
 
-	if (ch34x_usb_transfer(ch34x_dev, len, 0) != len)
+	if (ch34x_usb_transfer(ch34x_dev, CH_ALL, len, 0) != len)
 		goto exit;
 
 	len = 4;
 
-	if (ch34x_usb_transfer(ch34x_dev, 0, len) != len)
+	if (ch34x_usb_transfer(ch34x_dev, CH_ALL, 0, len) != len)
 		goto exit;
 
 	if ((ch34x_dev->bulkin_buf[0] != USB20_CMD_FUNC_SWITCH) ||
@@ -462,7 +508,7 @@ static void ch34x_usb_complete_intr_urb(struct urb *urb)
 	struct ch34x_device *ch34x_dev;
 	u8 gpioindex;
 	bool triggered;
-	int i;
+	int i, j;
 	u16 io_status;
 	int gpiocount;
 
@@ -474,10 +520,15 @@ static void ch34x_usb_complete_intr_urb(struct urb *urb)
 
 		if (ch34x_dev->chiptype == CHIP_CH347F)
 			gpiocount = CH347F_MPHSI_GPIOS;
-		else
+		else if (ch34x_dev->chiptype == CHIP_CH347T)
 			gpiocount = CH347T_MPHSI_GPIOS;
+		else if (ch34x_dev->chiptype == CHIP_CH9341C)
+			gpiocount = CH9341C_MPHSI_GPIOS;
+		else
+			gpiocount = 0;
 
-		if (ch34x_dev->chiptype != CHIP_CH341) {
+		if (ch34x_dev->chiptype == CHIP_CH347F ||
+		    ch34x_dev->chiptype == CHIP_CH347T) {
 			for (i = 0; i < gpiocount; i++) {
 				gpioindex =
 					ch34x_dev->gpio_pins[i]->gpioindex;
@@ -490,9 +541,39 @@ static void ch34x_usb_complete_intr_urb(struct urb *urb)
 					i, ch34x_dev->irq_enabled[i],
 					gpioindex, triggered);
 				if (ch34x_dev->irq_enabled[i] && triggered)
-					ch347_irq_check(ch34x_dev, i);
+					ch34x_irq_check(ch34x_dev, i);
 			}
-		} else {
+		} else if (ch34x_dev->chiptype == CHIP_CH9341C) {
+			for (j = 0; j < urb->actual_length; j += 12) {
+				if (ch34x_dev->intrin_buf[j] != 0xCC ||
+				    ch34x_dev->intrin_buf[j + 1] != 0x33)
+					goto exit;
+				u16 trigger_status =
+					ch34x_dev->intrin_buf
+						[j + CH9341_CMD_HEADER + 2] |
+					(ch34x_dev->intrin_buf
+						 [j + CH9341_CMD_HEADER +
+						  +3]
+					 << 8);
+				for (i = 0; i < gpiocount; i++) {
+					gpioindex = ch34x_dev->gpio_pins[i]
+							    ->gpioindex;
+					triggered = trigger_status &
+						    BIT(i);
+					DEV_DBG(CH34X_USBDEV,
+						"GPIO status: irq_enable[%d]=%d gpioindex=%d triggered=%d",
+						i,
+						ch34x_dev->irq_enabled[i],
+						gpioindex, triggered);
+					if (ch34x_dev->irq_enabled[i] &&
+					    triggered)
+						ch34x_irq_check(ch34x_dev,
+								i);
+				}
+			}
+		}
+
+		else {
 			io_status = (ch34x_dev->intrin_buf[1] & 0x0F)
 					    << 8 |
 				    ch34x_dev->intrin_buf[2];
@@ -500,9 +581,11 @@ static void ch34x_usb_complete_intr_urb(struct urb *urb)
 			DEV_DBG(CH34X_USBDEV, "CH341 io_status: 0x%04x",
 				io_status);
 		}
-
-		usb_submit_urb(ch34x_dev->intr_urb, GFP_ATOMIC);
 	}
+
+exit:
+	if (!ch34x_dev->disconnecting)
+		usb_submit_urb(ch34x_dev->intr_urb, GFP_ATOMIC);
 }
 
 static int ch34x_write_buffers_alloc(struct ch34x_device *ch34x_dev)
@@ -546,8 +629,7 @@ static void ch34x_usb_free_device(struct ch34x_device *ch34x_dev)
 	int i;
 
 	CHECK_PARAM(ch34x_dev);
-	if (ch34x_dev->intr_urb)
-		usb_free_urb(ch34x_dev->intr_urb);
+
 	if (ch34x_dev->bulkout_buf)
 		kfree(ch34x_dev->bulkout_buf);
 	if (ch34x_dev->bulkin_buf)
@@ -555,11 +637,12 @@ static void ch34x_usb_free_device(struct ch34x_device *ch34x_dev)
 	if (ch34x_dev->intrin_buf)
 		kfree(ch34x_dev->intrin_buf);
 
+	if (ch34x_dev->intr_urb)
+		usb_free_urb(ch34x_dev->intr_urb);
 	for (i = 0; i < CH34X_NW; i++) {
 		if (ch34x_dev->wb[i].urb)
 			usb_free_urb(ch34x_dev->wb[i].urb);
 	}
-	usb_kill_anchored_urbs(&ch34x_dev->submitted);
 	ch34x_write_buffers_free(ch34x_dev);
 	usb_set_intfdata(ch34x_dev->intf, NULL);
 	usb_put_dev(ch34x_dev->usb_dev);
@@ -583,6 +666,7 @@ static int ch34x_usb_probe(struct usb_interface *intf,
 	ch34x_dev = kzalloc(sizeof(struct ch34x_device), GFP_KERNEL);
 	if (!ch34x_dev) {
 		DEV_ERR(&intf->dev, "Could not allocate device memory");
+		usb_put_dev(usb_dev);
 		return -ENOMEM;
 	}
 
@@ -603,51 +687,17 @@ static int ch34x_usb_probe(struct usb_interface *intf,
 			usb_endpoint_num(endpoint));
 
 		if (usb_endpoint_is_bulk_in(endpoint)) {
-			ch34x_dev->bulk_in = endpoint;
-			ch34x_dev->bulkin_buf =
-				kmalloc(MAX_BUFFER_LENGTH * 2, GFP_KERNEL);
-			if (!ch34x_dev->bulkin_buf) {
-				DEV_ERR(CH34X_USBDEV,
-					"Could not allocate bulkin buffer");
-				goto error;
-			}
-		}
-
-		else if (usb_endpoint_is_bulk_out(endpoint)) {
-			ch34x_dev->bulk_out = endpoint;
-			ch34x_dev->bulk_out_endpointAddr =
+			ch34x_dev->bulk_in[ch34x_dev->bulkin_num] =
+				endpoint;
+			ch34x_dev->bulkin_num++;
+		} else if (usb_endpoint_is_bulk_out(endpoint)) {
+			ch34x_dev->bulk_out[ch34x_dev->bulkout_num] =
+				endpoint;
+			ch34x_dev->bulk_out_endpointAddr
+				[ch34x_dev->bulkout_num] =
 				endpoint->bEndpointAddress;
-			ch34x_dev->bulkout_buf =
-				kmalloc(MAX_BUFFER_LENGTH * 2, GFP_KERNEL);
-			if (!ch34x_dev->bulkout_buf) {
-				DEV_ERR(CH34X_USBDEV,
-					"Could not allocate bulkout buffer");
-				goto error;
-			}
-			ch34x_dev->writesize = MAX_BUFFER_LENGTH * 2;
-
-			ret = ch34x_write_buffers_alloc(ch34x_dev);
-			if (ret)
-				goto error;
-
-			for (j = 0; j < CH34X_NW; j++) {
-				struct ch34x_wb *snd = &(ch34x_dev->wb[j]);
-
-				snd->urb = usb_alloc_urb(0, GFP_KERNEL);
-				if (snd->urb == NULL)
-					goto error;
-
-				usb_fill_bulk_urb(
-					snd->urb, ch34x_dev->usb_dev, 0,
-					NULL, ch34x_dev->writesize,
-					ch34x_write_bulk_callback, snd);
-				snd->urb->transfer_flags |=
-					URB_NO_TRANSFER_DMA_MAP;
-				snd->instance = ch34x_dev;
-			}
-		}
-
-		else if (usb_endpoint_xfer_int(endpoint)) {
+			ch34x_dev->bulkout_num++;
+		} else if (usb_endpoint_xfer_int(endpoint)) {
 			ch34x_dev->intr_in = endpoint;
 			ch34x_dev->intrin_buf = kmalloc(
 				CH347_USB_MAX_INTR_SIZE, GFP_KERNEL);
@@ -671,6 +721,9 @@ static int ch34x_usb_probe(struct usb_interface *intf,
 	} else if (id->idProduct == 0x55e7) {
 		ch34x_dev->chiptype = CHIP_CH339W;
 		length = CH347_USB_MAX_INTR_SIZE;
+	} else if (id->idProduct == 0x55ee) {
+		ch34x_dev->chiptype = CHIP_CH9341C;
+		length = CH9341_USB_MAX_INTR_SIZE;
 	}
 
 	/* Save the pointer to the new ch34x_device in USB interface device data */
@@ -679,9 +732,40 @@ static int ch34x_usb_probe(struct usb_interface *intf,
 	spin_lock_init(&ch34x_dev->err_lock);
 	spin_lock_init(&ch34x_dev->write_lock);
 	init_waitqueue_head(&ch34x_dev->wq_send);
-	init_usb_anchor(&ch34x_dev->submitted);
 
-	if (ch34x_dev->chiptype != CHIP_CH341) {
+	ch34x_dev->bulkin_buf = kmalloc(MAX_BUFFER_LENGTH, GFP_KERNEL);
+	if (!ch34x_dev->bulkin_buf) {
+		DEV_ERR(CH34X_USBDEV, "Could not allocate bulkin buffer");
+		goto error;
+	}
+
+	ch34x_dev->bulkout_buf = kmalloc(MAX_BUFFER_LENGTH, GFP_KERNEL);
+	if (!ch34x_dev->bulkout_buf) {
+		DEV_ERR(CH34X_USBDEV, "Could not allocate bulkout buffer");
+		goto error;
+	}
+
+	ch34x_dev->writesize = MAX_BUFFER_LENGTH;
+	ret = ch34x_write_buffers_alloc(ch34x_dev);
+	if (ret)
+		goto error;
+
+	for (j = 0; j < CH34X_NW; j++) {
+		struct ch34x_wb *wb = &(ch34x_dev->wb[j]);
+
+		wb->urb = usb_alloc_urb(0, GFP_KERNEL);
+		if (wb->urb == NULL)
+			goto error;
+
+		usb_fill_bulk_urb(wb->urb, ch34x_dev->usb_dev, 0, NULL,
+				  ch34x_dev->writesize,
+				  ch34x_write_bulk_callback, wb);
+		wb->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+		wb->instance = ch34x_dev;
+	}
+
+	if (ch34x_dev->chiptype == CHIP_CH347T ||
+	    ch34x_dev->chiptype == CHIP_CH347F) {
 		if (ch347_get_chipinfo(ch34x_dev) == false) {
 			ret = -EPROTO;
 			goto error;
@@ -710,9 +794,11 @@ static int ch34x_usb_probe(struct usb_interface *intf,
 	if (ret < 0)
 		goto error1;
 
-	if ((ch34x_dev->firmver >= 0x0341) ||
-	    (ch34x_dev->chiptype == CHIP_CH347F)) {
-		ret = ch347_irq_probe(ch34x_dev);
+	if ((ch34x_dev->chiptype == CHIP_CH347T &&
+	     ch34x_dev->firmver >= 0x0341) ||
+	    (ch34x_dev->chiptype == CHIP_CH347F) ||
+	    (ch34x_dev->chiptype == CHIP_CH9341C)) {
+		ret = ch34x_irq_probe(ch34x_dev);
 		if (ret < 0)
 			goto error2;
 	}
@@ -723,25 +809,21 @@ static int ch34x_usb_probe(struct usb_interface *intf,
 			goto error3;
 	}
 
-	ret = ch34x_mphsi_spi_probe(ch34x_dev);
+	ret = ch34x_spi_probe(ch34x_dev);
 	if (ret < 0)
 		goto error4;
 
-	ret = ch34x_spi_probe(ch34x_dev);
+	ret = ch34x_mphsi_i2c_probe(ch34x_dev);
 	if (ret < 0)
 		goto error5;
 
-	ret = ch34x_mphsi_i2c_probe(ch34x_dev);
-	if (ret < 0)
-		goto error6;
-
 	if (ch34x_dev->intr_in) {
-		/* Xreate URB for handling interrupts */
+		/* Create URB for handling interrupts */
 		if (!(ch34x_dev->intr_urb =
 			      usb_alloc_urb(0, GFP_KERNEL))) {
 			DEV_ERR(&intf->dev, "failed to alloc URB");
 			ret = -ENOMEM;
-			goto error7;
+			goto error6;
 		}
 
 		usb_fill_int_urb(
@@ -761,18 +843,19 @@ static int ch34x_usb_probe(struct usb_interface *intf,
 
 	return 0;
 
-error7:
-	ch34x_mphsi_i2c_remove(ch34x_dev);
 error6:
-	ch34x_spi_remove(ch34x_dev);
+	ch34x_mphsi_i2c_remove(ch34x_dev);
 error5:
-	ch34x_mphsi_spi_remove(ch34x_dev);
+	ch34x_spi_remove(ch34x_dev);
 error4:
-	ch34x_mphsi_gpio_remove(ch34x_dev);
+	if (ch34x_dev->chiptype != CHIP_CH341)
+		ch34x_mphsi_gpio_remove(ch34x_dev);
 error3:
-	if ((ch34x_dev->firmver >= 0x0341) ||
-	    (ch34x_dev->chiptype == CHIP_CH347F))
-		ch347_irq_remove(ch34x_dev);
+	if ((ch34x_dev->chiptype == CHIP_CH347T &&
+	     ch34x_dev->firmver >= 0x0341) ||
+	    (ch34x_dev->chiptype == CHIP_CH347F) ||
+	    (ch34x_dev->chiptype == CHIP_CH9341C))
+		ch34x_irq_remove(ch34x_dev);
 error2:
 	ch34x_cfg_remove(ch34x_dev);
 error1:
@@ -789,13 +872,13 @@ error:
 
 static void ch34x_draw_down(struct ch34x_device *ch34x_dev)
 {
-	int time;
+	int i;
 
-	time = usb_wait_anchor_empty_timeout(&ch34x_dev->submitted, 1000);
-	if (!time)
-		usb_kill_anchored_urbs(&ch34x_dev->submitted);
+	for (i = 0; i < CH34X_NW; i++)
+		usb_kill_urb(ch34x_dev->wb[i].urb);
+
 	if (ch34x_dev->intr_urb)
-		usb_free_urb(ch34x_dev->intr_urb);
+		usb_kill_urb(ch34x_dev->intr_urb);
 }
 
 #ifdef CONFIG_PM
@@ -803,16 +886,40 @@ static int ch34x_usb_suspend(struct usb_interface *intf,
 			     pm_message_t message)
 {
 	struct ch34x_device *ch34x_dev = usb_get_intfdata(intf);
+	int cnt;
 
-	if (!ch34x_dev)
+	spin_lock_irq(&ch34x_dev->write_lock);
+	if (PMSG_IS_AUTO(message)) {
+		if (ch34x_dev->transmitting) {
+			spin_unlock_irq(&ch34x_dev->write_lock);
+			return -EBUSY;
+		}
+	}
+	cnt = ch34x_dev->susp_count++;
+	spin_unlock_irq(&ch34x_dev->write_lock);
+	if (cnt)
 		return 0;
 	ch34x_draw_down(ch34x_dev);
+
 	return 0;
 }
 
 static int ch34x_usb_resume(struct usb_interface *intf)
 {
-	return 0;
+	struct ch34x_device *ch34x_dev = usb_get_intfdata(intf);
+	int rv = 0;
+
+	spin_lock_irq(&ch34x_dev->write_lock);
+	if (--ch34x_dev->susp_count)
+		goto out;
+
+	if (ch34x_dev->intr_urb)
+		rv = usb_submit_urb(ch34x_dev->intr_urb, GFP_ATOMIC);
+
+out:
+	spin_unlock_irq(&ch34x_dev->write_lock);
+
+	return rv;
 }
 #endif
 
@@ -842,13 +949,18 @@ static void ch34x_usb_disconnect(struct usb_interface *intf)
 
 	DEV_INFO(CH34X_USBDEV, "CH34X adapter now disconnected");
 
+	/* Stop the interrupt URB self-resubmit loop before killing URBs */
+	ch34x_dev->disconnecting = true;
+	ch34x_draw_down(ch34x_dev);
+
 	ch34x_mphsi_i2c_remove(ch34x_dev);
 	ch34x_spi_remove(ch34x_dev);
-	ch34x_mphsi_spi_remove(ch34x_dev);
 	ch34x_mphsi_gpio_remove(ch34x_dev);
-	if ((ch34x_dev->firmver >= 0x0341) ||
-	    (ch34x_dev->chiptype == CHIP_CH347F))
-		ch347_irq_remove(ch34x_dev);
+	if ((ch34x_dev->chiptype == CHIP_CH347T &&
+	     ch34x_dev->firmver >= 0x0341) ||
+	    (ch34x_dev->chiptype == CHIP_CH347F) ||
+	    (ch34x_dev->chiptype == CHIP_CH9341C))
+		ch34x_irq_remove(ch34x_dev);
 	ch34x_cfg_remove(ch34x_dev);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
 	ida_free(&ch34x_devid_ida, ch34x_dev->id);

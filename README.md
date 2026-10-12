@@ -1,4 +1,4 @@
-# CH347/CH341 Linux USB to SPI/I2C/GPIO Controller Driver
+# CH347/CH341/CH339/CH9341 Linux USB to SPI/I2C/GPIO Controller Driver
 
 # 1 概述
 
@@ -6,14 +6,14 @@
 
 该驱动软件正常工作后，会在系统下创建新的SPI和I2C Controller控制器，拥有独立的bus num，原SPI和I2C器件的设备驱动可直接挂载到该总线上，无需修改。驱动会同时创建GPIO相关资源，各GPIO可通过sysfs文件系统或应用层软件直接访问，也可以由其他设备驱动申请该GPIO的访问权以及申请GPIO对应中断号并注册中断服务程序。
 
-该驱动支持：高速USB转串口/JTAG/SPI/I2C/GPIO转换芯片CH347F/T，全速USB转串口/SPI/I2C/GPIO转换芯片CH341A/B/C/F/H/T，高速USB转串口/SPI/I2C/Ethernet/Hub转换芯片CH339W。
+该驱动支持：高速USB转串口/JTAG/SPI/I2C/GPIO转换芯片CH347F/T，全速USB转串口/SPI/I2C/GPIO转换芯片CH341A/B/C/F/H/T，高速USB转串口/SPI/I2C/Ethernet/Hub转换芯片CH339W，全速USB转SPI/I2C/PWM/GPIO转换芯片CH9341C。
 
-驱动仅支持SPI/I2C/GPIO接口，该文档主要介绍CH347F/T芯片的相关特性。
+驱动仅支持SPI/I2C/GPIO接口。
 
 驱动功能：
-1、支持CH347与CH341总线转接芯片；
+1、支持CH347、CH341、CH339、CH9341总线转接芯片；
 2、支持SPI、I2C、GPIO、IRQ等接口和功能扩展；
-3、支持SPI、I2C的bus总线号、GPIO编号、IRQ中断号的动态分配以及静态指定；
+3、支持SPI、I2C的Bus总线号、GPIO编号、IRQ中断号的动态分配以及静态指定；
 4、支持自动绑定SPI设备驱动程序；
 
 ## 1.1 CH347F SPI接口
@@ -45,23 +45,53 @@ SPI接口特性：
 - 2路片选
 - 片选高/低有效
 
-## 1.3 CH347F I2C接口
+## 1.3 CH9341C SPI接口
+
+| PIN脚 | SPI功能脚 | GPIO复用脚 |
+| :---: | :-------: | :--------: |
+|  24   |   SCS0    |     -      |
+|  17   |   SCS1    |   GPIO4    |
+|  16   |   SCS2    |   GPIO5    |
+|  15   |   SCS3    |   GPIO6    |
+|  25   |    SCK    |     -      |
+|  26   |   MOSI    |     -      |
+|   1   |   MISO    |     -      |
+
+SPI接口特性：
+
+- SPI模式0/3
+- SPI时钟频率24MHz~750KHz
+- MSB/LSB传输
+- 8位传输
+- 4路片选
+- 片选高/低有效
+
+## 1.4 CH347F I2C接口
 
 | PIN脚 | I2C功能脚 | GPIO复用脚 |
 | :---: | :-------: | :--------: |
 |  11   |    SCL    |     -      |
 |  12   |    SDA    |     -      |
 
-## 1.4 CH347T I2C接口
+## 1.5 CH347T I2C接口
 
 | PIN脚 | I2C功能脚 | GPIO复用脚 |
 | :---: | :-------: | :--------: |
-|  11   |    SCL    |   gpio3    |
+|  11   |    SCL    |   GPIO3    |
 |  12   |    SDA    |     -      |
 
 CH347F/T支持I2C时钟：20kHz，100kHz，400kHz，750kHz和1MHz等。驱动会默认将I2C的时钟初始化为100KHz，可以在ch34x_mphsi_i2c_init函数中修改。
 
-## 1.5 CH347F GPIO接口
+## 1.6 CH9341C I2C接口
+
+| PIN脚 | I2C功能脚 | GPIO复用脚 |
+| :---: | :-------: | :--------: |
+|  22   |    SCL    |     -      |
+|  23   |    SDA    |     -      |
+
+CH9341C支持I2C时钟：20kHz，100kHz，400kHz和750kHz。驱动会默认将I2C的时钟初始化为100KHz，可以在ch34x_mphsi_i2c_init函数中修改。
+
+## 1.7 CH347F GPIO接口
 
 | PIN脚 | GPIO复用脚 | GPIO中断                                     |
 | :---: | :--------: | -------------------------------------------- |
@@ -76,7 +106,7 @@ CH347F/T支持I2C时钟：20kHz，100kHz，400kHz，750kHz和1MHz等。驱动会
 
 CH347F的硬件接口支持GPIO0~GPIO7，引脚未与SPI和I2C复用，此驱动开放支持了所有GPIO。
 
-## 1.6 CH347T GPIO接口
+## 1.8 CH347T GPIO接口
 
 | PIN脚 | GPIO复用脚 | GPIO中断 |
 | :---: | :--------: | -------- |
@@ -85,6 +115,23 @@ CH347F的硬件接口支持GPIO0~GPIO7，引脚未与SPI和I2C复用，此驱动
 |  13   |   gpio7    | 支持     |
 
 CH347T的硬件接口支持GPIO0~GPIO7，考虑到部分引脚被SPI和I2C接口占用，驱动仅开放支持GPIO4，GPIO6和GPIO7。
+
+## 1.9 CH9341C GPIO接口
+
+| PIN脚 | GPIO复用脚 | GPIO中断 |
+| :---: | :--------: | -------- |
+|  21   |   GPIO0    | 支持     |
+|  20   |   GPIO1    | 支持     |
+|  19   |   GPIO2    | 支持     |
+|  18   |   GPIO3    |          |
+|  17   |   GPIO4    |          |
+|  16   |   GPIO5    |          |
+|  15   |   GPIO6    |          |
+|  13   |   GPIO7    | 支持     |
+|  12   |   GPIO8    | 支持     |
+|  11   |   GPIO9    | 支持     |
+
+CH347F的硬件接口支持GPIO0~GPIO7，引脚未与SPI和I2C复用，此驱动开放支持了所有GPIO。
 
 # 2 驱动操作说明
 
@@ -103,7 +150,7 @@ CH347T的硬件接口支持GPIO0~GPIO7，考虑到部分引脚被SPI和I2C接口
 
 ## 3.1 匹配SPI设备驱动程序
 
-通过CH347芯片配合该厂商驱动程序，可在Linux系统扩展出一路新的SPI主机(SPI Controller)接口，由于该SPI主机不属于SOC内部资源，所以不能在DTS文件中描述该SPI主机的资源信息，本节介绍一种自动匹配设备驱动程序的方法，底层原理等同于使用DTS方式。
+通过芯片配合该厂商驱动程序，可在Linux系统扩展出一路新的SPI主机(SPI Controller)接口，由于该SPI主机不属于SOC内部资源，所以不能在DTS文件中描述该SPI主机的资源信息，本节介绍一种自动匹配设备驱动程序的方法，底层原理等同于使用DTS方式。
 
 用户需要在驱动程序文件 ch34x_mphsi_master_spi.c 中注释如下代码：
 
@@ -116,6 +163,9 @@ CH347T的硬件接口支持GPIO0~GPIO7，考虑到部分引脚被SPI和I2C接口
 在ch34x_mphsi_master_spi.c文件中，找到如下代码
 
 ```c
+int ch34x_spi_probe(struct ch34x_device *ch34x_dev)
+{
+    ...
 #ifdef SPI_AUTOPROBE
 	/************************** Create SPI device #1 **************************/
 	ch34x_spi_slaves[0].bus_num = ch34x_dev->master->bus_num;
@@ -131,23 +181,23 @@ CH347T的硬件接口支持GPIO0~GPIO7，考虑到部分引脚被SPI和I2C接口
 	 * }
 	 */
 	strcpy(ch34x_spi_slaves[0].modalias, "spidev");
-
-	ch34x_spi_slaves[0].chip_select =
-		0; /* Chip select 0/1 corresponds to SCS0 or SCS1 of CH347 */
-	ch34x_spi_slaves[0].max_speed_hz = 3000000; /* SPI clock frequency */
+	ch34x_spi_slaves[0].chip_select = 0;
+	ch34x_spi_slaves[0].max_speed_hz =
+		3000000; /* SPI clock frequency */
 	ch34x_spi_slaves[0].mode = SPI_MODE_0; /* SPI mode */
-	 
-	 /**
+
+	/**
 	 * If the SPI device driver uses interrupt I/O, there are two cases:
-	 * Case 1: Using extended GPIO of CH347 as the interrupt I/O
-	 *      The gpio_index variable indicates the hardware GPIO pin index of CH347
-	 *      (CH347F: 0-7, corresponding to GPIO0~7; CH347T: 0-2, corresponding to GPIO4/6/7)
+	 * Case 1: Using extended GPIO of chip as the interrupt I/O
+	 *      The gpio_index variable indicates the hardware GPIO pin index of chip
+	 *      (CH347F: 0-7, corresponding to GPIO0~7; CH347T: 0-2, corresponding to GPIO4/6/7;
+	 *       CH9341C: 0/1/2/7/8/9, corresponding to GPIO0/1/2/7/8/9)
 	 * Case 2: Using the SoC's GPIO as the interrupt I/O
 	 *      The gpio_index variable indicates the corresponding GPIO number.
 	 *      Generally, you can view the gpiochip/base+index value in the system's /sys/class/gpio directory
 	 * 
 	 * Example 1: Using GPIO1 of CH347F as the interrupt I/O
-	 * gpio_index = 2;
+	 * gpio_index = 1;
 	 * ch34x_spi_slaves[0].irq = gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
 	 * 
 	 * Example 2: Using the SoC's GPIO as the interrupt I/O
@@ -156,7 +206,7 @@ CH347T的硬件接口支持GPIO0~GPIO7，考虑到部分引脚被SPI和I2C接口
 	 * 
 	 * Note: If the I2C device driver does not require interrupt I/O, ignore the above instructions!
 	 */
-	gpio_index = 2;
+	gpio_index = 1;
 	ch34x_spi_slaves[0].irq =
 		gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
 
@@ -172,7 +222,10 @@ CH347T的硬件接口支持GPIO0~GPIO7，考虑到部分引脚被SPI和I2C接口
 	/**
 	* You can continue creating SPI devices with similar code and configuration as above.
 	*/
+
 #endif
+    ...
+}
 ```
 
 ## 3.2 用户态访问SPI接口
@@ -246,9 +299,11 @@ int status = ioctl (spi, SPI_IOC_MESSAGE(1), &spi_trans);
 // use input data in miso
 ```
 
+完整的SPIDEV设备操作示例，可以参考内核源码目录下的**\tools\spi\spidev_test.c**文件。
+
 ## 3.3 匹配I2C设备驱动程序
 
-通过CH347芯片配合该厂商驱动程序，可在Linux系统扩展出一路新的I2C主机(I2C adapter)接口，由于该I2C主机不属于SOC内部资源，所以不能在DTS文件中描述该SPI主机的资源信息，本节介绍一种匹配设备驱动程序的方法，底层原理等同于使用DTS方式。
+通过芯片配合该厂商驱动程序，可在Linux系统扩展出一路新的I2C主机(I2C adapter)接口，由于该I2C主机不属于SOC内部资源，所以不能在DTS文件中描述该SPI主机的资源信息，本节介绍一种匹配设备驱动程序的方法，底层原理等同于使用DTS方式。
 
 用户需要在驱动程序文件 ch34x_mphsi_master_i2c.c 中注释如下代码：
 
@@ -263,8 +318,8 @@ I2C设备驱动中如包含 id_table 成员，则直接修改ch34x_mphsi_master_
 int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev)
 {
     ...
-#ifdef I2C_AUTOPROBE   
-    /*
+#ifdef I2C_AUTOPROBE
+	/*
 	 * The modalias parameter should match with the driver name of I2C device driver, such as:
 	 * 
 	 * static const struct i2c_device_id at24_ids[] = {
@@ -277,39 +332,49 @@ int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev)
 	ch34x_i2c_slaves[0].addr = 0x50;
 
 	/**
-	 * If the I2C device driver uses interrupt I/O, there are two cases:
-	 * Case 1: Using extended GPIO of CH347 as the interrupt I/O
-	 *      The gpio_index variable indicates the hardware GPIO pin index of CH347
-	 *      (CH347F: 0-7, corresponding to GPIO0~7; CH347T: 0-2, corresponding to GPIO4/6/7)
+	 * If the SPI device driver uses interrupt I/O, there are two cases:
+	 * Case 1: Using extended GPIO of chip as the interrupt I/O
+	 *      The gpio_index variable indicates the hardware GPIO pin index of chip
+	 *      (CH347F: 0-7, corresponding to GPIO0~7; CH347T: 0-2, corresponding to GPIO4/6/7;
+	 *       CH9341C: 0/1/2/7/8/9, corresponding to GPIO0/1/2/7/8/9)
 	 * Case 2: Using the SoC's GPIO as the interrupt I/O
 	 *      The gpio_index variable indicates the corresponding GPIO number.
 	 *      Generally, you can view the gpiochip/base+index value in the system's /sys/class/gpio directory
 	 * 
-	 * Example 1: Using GPIO1 of CH347F as the interrupt I/O
-	 * gpio_index = 1;
-	 * ch34x_i2c_slaves[0].irq = gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
+	 * Example 1: Using GPIO2 of CH347F as the interrupt I/O
+	 * gpio_index = 2;
+	 * ch34x_spi_slaves[0].irq = gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
 	 * 
 	 * Example 2: Using the SoC's GPIO as the interrupt I/O
-	 * gpio_index = 504;
-	 * ch34x_i2c_slaves[0].irq = gpio_to_irq(gpio_index);
+	 * gpio_index = 505;
+	 * ch34x_spi_slaves[0].irq = gpio_to_irq(gpio_index);
 	 * 
 	 * Note: If the I2C device driver does not require interrupt I/O, ignore the above instructions!
 	 */
-	gpio_index = 1;
-	ch34x_i2c_slaves[0].irq = gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
+	gpio_index = 2;
+	ch34x_i2c_slaves[0].irq =
+		gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
 
 	/* Create and register a new I2C device */
-	ch34x_dev->client[0] = i2c_new_device(&ch34x_dev->adapter, &ch34x_i2c_slaves[0]);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+	ch34x_dev->client[0] = i2c_new_client_device(&ch34x_dev->adapter,
+						     &ch34x_i2c_slaves[0]);
+#else
+	ch34x_dev->client[0] =
+		i2c_new_device(&ch34x_dev->adapter, &ch34x_i2c_slaves[0]);
+#endif
 	if (!ch34x_dev->client[0]) {
-	    dev_err(&ch34x_dev->adapter.dev, "add new i2c client failed\n");
-	    return -ENODEV;
+		dev_err(&ch34x_dev->adapter.dev,
+			"Add new I2C client failed\n");
+		return -ENODEV;
 	}
 
-    /**
+	/**
 	* If using a 1-master-to-multiple-slave configuration, 
 	* you can continue adding the above code to create and register more I2C devices.
 	*/
 #endif
+    ...
 }
 ```
 
@@ -517,11 +582,15 @@ MODULE_LICENSE("GPL");
 - 模式2: [SPI + I2C + 串口* 1] HID 驱动模式
 - 模式3: [JTAG + 串口* 1]  VCP 驱动模式
 
-**CH347W支持1种工作模式**
+**CH339W支持1种工作模式**
 
 - 模式0: [串口 + SPI + I2C + JTAG + ...]	
 
-**该驱动支持 CH347F，CH339W，CH341 的模式1 ，CH347T 的 模式1**
+**CH9341C支持1种工作模式**
+
+- 模式0: [SPI + I2C + PWM + GPIO]	
+
+**该驱动支持 CH347F，CH339W，CH9341C，CH341 的模式1 ，CH347T 的 模式1**
 
 
 
