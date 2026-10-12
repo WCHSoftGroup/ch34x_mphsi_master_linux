@@ -1,5 +1,5 @@
 /*
- * CH347/CH341 MPHSI I2C driver layer
+ * MPHSI I2C driver layer
  *
  * Copyright (C) 2026 Nanjing Qinheng Microelectronics Co., Ltd.
  * Web: http://wch.cn
@@ -17,8 +17,8 @@
 #define I2C_AUTOPROBE
 #undef I2C_AUTOPROBE
 
-extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, int out_len,
-			      int in_len);
+extern int ch34x_usb_transfer(struct ch34x_device *ch34x_dev, u8 ch,
+			      int out_len, int in_len);
 extern bool ch347_func_switch(struct ch34x_device *ch34x_dev, int index);
 extern int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev);
 extern void ch34x_mphsi_i2c_remove(struct ch34x_device *ch34x_dev);
@@ -37,7 +37,7 @@ static int ch34x_i2c_check_dev(struct ch34x_device *ch34x_dev, u8 addr)
 	ch34x_dev->bulkout_buf[5] = CH341_CMD_I2C_STM_STO;
 	ch34x_dev->bulkout_buf[6] = CH341_CMD_I2C_STM_END;
 
-	retval = ch34x_usb_transfer(ch34x_dev, 6, 2);
+	retval = ch34x_usb_transfer(ch34x_dev, CH_ALL, 6, 2);
 	if (retval < 0)
 		goto exit;
 
@@ -153,14 +153,14 @@ static int ch341_i2c_stream(struct ch34x_device *ch34x_dev, u32 txlen,
 	len = 0;
 
 	if (rxlen) {
-		len = ch34x_usb_transfer(ch34x_dev, i, rxlen);
+		len = ch34x_usb_transfer(ch34x_dev, CH_ALL, i, rxlen);
 		if (len != rxlen) {
 			retval = -EPROTO;
 			goto error;
 		}
 		memcpy(rxbuf, ch34x_dev->bulkin_buf, rxlen);
 	} else {
-		len = ch34x_usb_transfer(ch34x_dev, i, 0);
+		len = ch34x_usb_transfer(ch34x_dev, CH_ALL, i, 0);
 		if (len != i) {
 			retval = -EPROTO;
 			goto error;
@@ -284,7 +284,8 @@ static int ch347_i2c_stream(struct ch34x_device *ch34x_dev, u32 txlen,
 	len = 0;
 
 	if (rxlen) {
-		len = ch34x_usb_transfer(ch34x_dev, i, rxlen + ackbits);
+		len = ch34x_usb_transfer(ch34x_dev, CH_ALL, i,
+					 rxlen + ackbits);
 		if (len != (rxlen + ackbits)) {
 			retval = -EPROTO;
 			goto error;
@@ -301,7 +302,7 @@ static int ch347_i2c_stream(struct ch34x_device *ch34x_dev, u32 txlen,
 			ch34x_dev->bulkin_buf + ackbits, len);
 		memcpy(rxbuf, ch34x_dev->bulkin_buf, rxlen);
 	} else {
-		len = ch34x_usb_transfer(ch34x_dev, i, ackbits);
+		len = ch34x_usb_transfer(ch34x_dev, CH_ALL, i, ackbits);
 		if (len != ackbits) {
 			retval = -EPROTO;
 			goto error;
@@ -315,6 +316,185 @@ static int ch347_i2c_stream(struct ch34x_device *ch34x_dev, u32 txlen,
 		}
 	}
 error:
+	return retval;
+}
+
+static int ch9341_i2c_stream(struct ch34x_device *ch34x_dev, u32 txlen,
+			     void *txbuf, u32 rxlen, void *rxbuf)
+{
+	int i;
+	int retval = 0;
+	int ackbits = 0;
+	int t_ackbits;
+	u8 *io = ch34x_dev->bulkout_buf;
+
+	u32 windex = 0, rindex = 0;
+	u32 wlen_single = 0, rlen_single = 0;
+	bool tstart, tstop;
+	u32 ilen, olen, tlen;
+	bool lastwrite = false, lastread = false;
+	bool firstwrite = true, firstread = false;
+
+	if (txlen && rxlen) {
+		firstread = true;
+	}
+
+retry:
+	if ((windex + CH9341_I2C_MAX_LENGTH) >= txlen) {
+		wlen_single = txlen - windex;
+		lastwrite = true;
+	} else
+		wlen_single = CH9341_I2C_MAX_LENGTH;
+
+	if (lastwrite) {
+		if ((rindex + CH9341_I2C_MAX_LENGTH) >= rxlen) {
+			rlen_single = rxlen - rindex;
+			lastread = true;
+		} else
+			rlen_single = CH9341_I2C_MAX_LENGTH;
+	} else
+		rlen_single = 0;
+
+	if (firstwrite) {
+		tstart = true;
+		firstwrite = false;
+	} else
+		tstart = false;
+
+	if (rxlen == 0) {
+		if (lastwrite)
+			tstop = true;
+		else
+			tstop = false;
+	} else {
+		if (lastread) {
+			tstop = true;
+		} else
+			tstop = false;
+	}
+
+	i = 0;
+	ackbits = 0;
+	io[i++] = CH9341_CMD_I2C_STREAM;
+	io[i++] = (u8)~CH9341_CMD_I2C_STREAM;
+	io[i++] = 0x00;
+	io[i++] = 0x00;
+
+	if (tstart) {
+		io[i++] = 0x00;
+		io[i++] = CH9341_CMD_I2C_NEW_STM_START << 3;
+	}
+
+	if (wlen_single) {
+		if (tstart) {
+			io[i++] = 0x00;
+			io[i++] = (u8)((CH9341_CMD_I2C_NEW_STM_ADDR << 3) |
+				       0x00);
+			io[i++] = *(u8 *)txbuf;
+			tlen = wlen_single - 1;
+			io[i++] = (u8)tlen;
+			io[i++] = (u8)((CH9341_CMD_I2C_NEW_STM_OUT << 3) |
+				       (tlen >> 8));
+			memcpy(io + i, txbuf + 1, tlen);
+			i += tlen;
+			ackbits += wlen_single;
+
+		} else {
+			tlen = wlen_single;
+			io[i++] = (u8)tlen;
+			io[i++] = (u8)((CH9341_CMD_I2C_NEW_STM_OUT << 3) |
+				       (tlen >> 8));
+			memcpy(io + i, txbuf + windex, tlen);
+			i += tlen;
+			ackbits += wlen_single;
+		}
+	}
+
+	if (rlen_single) {
+		if (firstread) {
+			firstread = false;
+			io[i++] = 0x00;
+			io[i++] = CH9341_CMD_I2C_NEW_STM_START
+				  << 3;
+			io[i++] = 0x00;
+			io[i++] = (u8)((CH9341_CMD_I2C_NEW_STM_ADDR << 3) |
+				       0x00);
+			io[i++] = *(u8 *)txbuf | 0x01;
+			ackbits += 1;
+		}
+
+		io[i++] = (u8)rlen_single;
+		if (tstop) {
+			io[i++] = (u8)((CH9341_CMD_I2C_NEW_STM_IN_NACK
+					<< 3) |
+				       (rlen_single >> 8));
+		} else
+			io[i++] =
+				(u8)((CH9341_CMD_I2C_NEW_STM_IN_ACK << 3) |
+				     (rlen_single >> 8));
+	}
+
+	if (tstop) {
+		io[i++] = 0x00;
+		io[i++] = CH9341_CMD_I2C_NEW_STM_STOP << 3;
+	}
+
+	ilen = i;
+
+	io[2] = (u8)(ilen - 4);
+	io[3] = (u8)((ilen - 4) >> 8);
+
+	if (rlen_single) {
+		olen = rlen_single + CH9341_CMD_HEADER + 2;
+		retval = ch34x_usb_transfer(ch34x_dev, CH_I2C, ilen, olen);
+		if (retval != olen) {
+			retval = -EPROTO;
+			goto exit;
+		}
+
+		t_ackbits = ch34x_dev->bulkin_buf[CH9341_CMD_HEADER] |
+			    (ch34x_dev->bulkin_buf[CH9341_CMD_HEADER + 1]
+			     << 8);
+		if (t_ackbits != ackbits) {
+			retval = -EPROTO;
+			goto exit;
+		}
+
+		olen -= CH9341_CMD_HEADER + 2;
+		memcpy(rxbuf + rindex,
+		       ch34x_dev->bulkin_buf + CH9341_CMD_HEADER + 2,
+		       olen);
+
+		windex += wlen_single;
+		rindex += rlen_single;
+		if (windex >= txlen && rindex >= rxlen) {
+			goto exit;
+		} else {
+			goto retry;
+		}
+	} else {
+		olen = CH9341_CMD_HEADER + 2;
+		retval = ch34x_usb_transfer(ch34x_dev, CH_I2C, ilen, olen);
+		if (retval != olen) {
+			retval = -EPROTO;
+			goto exit;
+		}
+
+		t_ackbits = ch34x_dev->bulkin_buf[CH9341_CMD_HEADER] |
+			    (ch34x_dev->bulkin_buf[CH9341_CMD_HEADER + 1]
+			     << 8);
+		if (t_ackbits != ackbits) {
+			retval = -EPROTO;
+			goto exit;
+		}
+		windex += wlen_single;
+		if (windex >= txlen && rindex >= rxlen) {
+			goto exit;
+		} else {
+			goto retry;
+		}
+	}
+exit:
 	return retval;
 }
 
@@ -341,7 +521,7 @@ static int ch34x_i2c_xfer(struct i2c_adapter *adapter,
 	if (num == 1) {
 		/* Size larger than endpoint max transfer size */
 		if ((msgs[0].len + 5) > MAX_BUFFER_LENGTH) {
-			retval = -EIO;
+			retval = -EINVAL;
 			goto exit;
 		}
 
@@ -352,6 +532,11 @@ static int ch34x_i2c_xfer(struct i2c_adapter *adapter,
 							  txbuf,
 							  msgs[0].len,
 							  msgs[0].buf);
+			else if (ch34x_dev->chiptype == CHIP_CH9341C)
+				retval = ch9341_i2c_stream(ch34x_dev, 0x01,
+							   txbuf,
+							   msgs[0].len,
+							   msgs[0].buf);
 			else
 				retval = ch347_i2c_stream(ch34x_dev, 0x01,
 							  txbuf,
@@ -366,6 +551,10 @@ static int ch34x_i2c_xfer(struct i2c_adapter *adapter,
 				retval = ch341_i2c_stream(ch34x_dev,
 							  msgs[0].len + 1,
 							  txbuf, 0, NULL);
+			else if (ch34x_dev->chiptype == CHIP_CH9341C)
+				retval = ch9341_i2c_stream(ch34x_dev,
+							   msgs[0].len + 1,
+							   txbuf, 0, NULL);
 			else
 				retval = ch347_i2c_stream(ch34x_dev,
 							  msgs[0].len + 1,
@@ -386,6 +575,10 @@ static int ch34x_i2c_xfer(struct i2c_adapter *adapter,
 			memcpy(&txbuf[1], msgs[0].buf, msgs[0].len);
 			if (ch34x_dev->chiptype == CHIP_CH341)
 				retval = ch341_i2c_stream(
+					ch34x_dev, msgs[0].len + 1, txbuf,
+					msgs[1].len, msgs[1].buf);
+			else if (ch34x_dev->chiptype == CHIP_CH9341C)
+				retval = ch9341_i2c_stream(
 					ch34x_dev, msgs[0].len + 1, txbuf,
 					msgs[1].len, msgs[1].buf);
 			else
@@ -424,24 +617,74 @@ static const struct i2c_algorithm ch34x_i2c_algorithm = {
 static int ch34x_mphsi_i2c_init(struct ch34x_device *ch34x_dev, u8 speed)
 {
 	int retval;
+	u32 i2c_clock;
+	int i = 0;
 
-	if ((ch34x_dev->firmver < 0x0341) &&
-	    (ch34x_dev->chiptype != CHIP_CH347F)) {
+	if ((ch34x_dev->chiptype == CHIP_CH347T &&
+	     ch34x_dev->firmver < 0x0341) ||
+	    ch34x_dev->chiptype == CHIP_CH341 ||
+	    ch34x_dev->chiptype == CHIP_CH9341C) {
 		if (speed > 3)
 			return -EINVAL;
 	}
 
+	switch (speed) {
+	case I2C_SPEED_20K:
+		i2c_clock = 20 * 1000;
+		break;
+	case I2C_SPEED_50K:
+		i2c_clock = 50 * 1000;
+		break;
+	case I2C_SPEED_100K:
+		i2c_clock = 100 * 1000;
+		break;
+	case I2C_SPEED_200K:
+		i2c_clock = 200 * 1000;
+		break;
+	case I2C_SPEED_400K:
+		i2c_clock = 400 * 1000;
+		break;
+	case I2C_SPEED_750K:
+		i2c_clock = 750 * 1000;
+		break;
+	case I2C_SPEED_1M:
+		i2c_clock = 1000 * 1000;
+		break;
+	}
+
 	mutex_lock(&ch34x_dev->io_mutex);
 
-	/* Set ch34x I2C speed */
-	ch34x_dev->bulkout_buf[0] = CH341_CMD_I2C_STREAM;
-	ch34x_dev->bulkout_buf[1] = CH341_CMD_I2C_STM_SET | speed;
-	ch34x_dev->bulkout_buf[2] = CH341_CMD_I2C_STM_END;
-	retval = ch34x_usb_transfer(ch34x_dev, 3, 0);
-	if (retval < 0)
-		retval = -EIO;
-	else
-		retval = 0;
+	if (ch34x_dev->chiptype == CHIP_CH9341C) {
+		ch34x_dev->bulkout_buf[i++] = CH9341_CMD_I2C_INIT;
+		ch34x_dev->bulkout_buf[i++] = (u8)~CH9341_CMD_I2C_INIT;
+		ch34x_dev->bulkout_buf[i++] = 10;
+		ch34x_dev->bulkout_buf[i++] = 0;
+		ch34x_dev->bulkout_buf[i++] = 0;
+		ch34x_dev->bulkout_buf[i++] = i2c_clock;
+		ch34x_dev->bulkout_buf[i++] = i2c_clock >> 8;
+		ch34x_dev->bulkout_buf[i++] = i2c_clock >> 16;
+		ch34x_dev->bulkout_buf[i++] = i2c_clock >> 24;
+		ch34x_dev->bulkout_buf[i++] = BIT(5);
+		i += 4;
+		retval = ch34x_usb_transfer(ch34x_dev, CH_I2C, i, 5);
+		if (retval != 5)
+			retval = -EPROTO;
+		else if (ch34x_dev->bulkin_buf[0] == CH9341_CMD_I2C_INIT &&
+			 ch34x_dev->bulkin_buf[4] == 0x00)
+			retval = 0;
+		else
+			retval = -EIO;
+	} else {
+		/* Set ch34x I2C speed */
+		ch34x_dev->bulkout_buf[0] = CH341_CMD_I2C_STREAM;
+		ch34x_dev->bulkout_buf[1] = CH341_CMD_I2C_STM_SET | speed;
+		ch34x_dev->bulkout_buf[2] = CH341_CMD_I2C_STM_END;
+		retval = ch34x_usb_transfer(ch34x_dev, CH_ALL, 3, 0);
+		if (retval < 0)
+			retval = -EIO;
+		else
+			retval = 0;
+	}
 
 	mutex_unlock(&ch34x_dev->io_mutex);
 	return retval;
@@ -465,7 +708,7 @@ static int ch34x_mphsi_i2c_setstretch(struct ch34x_device *ch34x_dev,
 	else
 		ch34x_dev->bulkout_buf[1] = CH347_CMD_I2C_STRETCH_N;
 	ch34x_dev->bulkout_buf[2] = CH341_CMD_I2C_STM_END;
-	retval = ch34x_usb_transfer(ch34x_dev, 3, 0);
+	retval = ch34x_usb_transfer(ch34x_dev, CH_ALL, 3, 0);
 	if (retval < 0)
 		retval = -EIO;
 	else
@@ -511,6 +754,7 @@ int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev)
 			"Register I2C controller failed\n");
 		return -ENODEV;
 	}
+	ch34x_dev->i2c_init = true;
 
 	if (ch34x_dev->chiptype == CHIP_CH347F) {
 		retval = ch347_func_switch(ch34x_dev, 3);
@@ -528,9 +772,9 @@ int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev)
 			"Init I2C speed failed\n");
 		goto error;
 	}
-	ch34x_dev->i2c_init = true;
 
-	if ((ch34x_dev->firmver >= 0x0341) ||
+	if ((ch34x_dev->chiptype == CHIP_CH347T &&
+	     ch34x_dev->firmver >= 0x0341) ||
 	    (ch34x_dev->chiptype == CHIP_CH347F)) {
 		retval = ch34x_mphsi_i2c_setstretch(ch34x_dev, false);
 		if (retval < 0) {
@@ -558,31 +802,37 @@ int ch34x_mphsi_i2c_probe(struct ch34x_device *ch34x_dev)
 	ch34x_i2c_slaves[0].addr = 0x50;
 
 	/**
-	 * If the I2C device driver uses interrupt I/O, there are two cases:
-	 * Case 1: Using extended GPIO of CH347 as the interrupt I/O
-	 *      The gpio_index variable indicates the hardware GPIO pin index of CH347
-	 *      (CH347F: 0-7, corresponding to GPIO0~7; CH347T: 0-2, corresponding to GPIO4/6/7)
+	 * If the SPI device driver uses interrupt I/O, there are two cases:
+	 * Case 1: Using extended GPIO of chip as the interrupt I/O
+	 *      The gpio_index variable indicates the hardware GPIO pin index of chip
+	 *      (CH347F: 0-7, corresponding to GPIO0~7; CH347T: 0-2, corresponding to GPIO4/6/7;
+	 *       CH9341C: 0/1/2/7/8/9, corresponding to GPIO0/1/2/7/8/9)
 	 * Case 2: Using the SoC's GPIO as the interrupt I/O
 	 *      The gpio_index variable indicates the corresponding GPIO number.
 	 *      Generally, you can view the gpiochip/base+index value in the system's /sys/class/gpio directory
 	 * 
-	 * Example 1: Using GPIO1 of CH347F as the interrupt I/O
-	 * gpio_index = 1;
-	 * ch34x_i2c_slaves[0].irq = gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
+	 * Example 1: Using GPIO2 of CH347F as the interrupt I/O
+	 * gpio_index = 2;
+	 * ch34x_spi_slaves[0].irq = gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
 	 * 
 	 * Example 2: Using the SoC's GPIO as the interrupt I/O
-	 * gpio_index = 504;
-	 * ch34x_i2c_slaves[0].irq = gpio_to_irq(gpio_index);
+	 * gpio_index = 505;
+	 * ch34x_spi_slaves[0].irq = gpio_to_irq(gpio_index);
 	 * 
 	 * Note: If the I2C device driver does not require interrupt I/O, ignore the above instructions!
 	 */
-	gpio_index = 0;
+	gpio_index = 2;
 	ch34x_i2c_slaves[0].irq =
 		gpio_to_irq(ch34x_dev->gpio.base + gpio_index);
 
 	/* Create and register a new I2C device */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+	ch34x_dev->client[0] = i2c_new_client_device(&ch34x_dev->adapter,
+						     &ch34x_i2c_slaves[0]);
+#else
 	ch34x_dev->client[0] =
 		i2c_new_device(&ch34x_dev->adapter, &ch34x_i2c_slaves[0]);
+#endif
 	if (!ch34x_dev->client[0]) {
 		dev_err(&ch34x_dev->adapter.dev,
 			"Add new I2C client failed\n");
